@@ -238,7 +238,9 @@ function makeUnit(fid,type,x,y) {
   return {id:uid++,faction:fid,type,x,y,tx:x,ty:y,hp:t.hp,maxHp:t.hp,speed:t.speed,attack:t.attack,range:t.range,size:t.size,attackCooldown:0,state:'idle',target:null,resourceTarget:null,buildTarget:null,carrying:0,carryingVespene:0,angle:0,harvestPhase:'goToRes',killCount:0,
     // Médivac uniquement
     cargo:[],healCooldown:0,medState:'heal',dropTarget:null,
-    energy: type==='medivac' ? UNIT_TYPES.medivac.maxEnergy : undefined};
+    energy: type==='medivac' ? UNIT_TYPES.medivac.maxEnergy : undefined,
+    // Stimulant
+    stimActive: false, stimTimer: 0};
 }
 function makeBuilding(fid,type,x,y) {
   const t=BUILDING_TYPES[type];
@@ -612,6 +614,9 @@ function doMedivac(u, dt){
 // ─── COMBAT ──────────────────────────────────────────────────────────────────
 // Logique combat unité militaire — NE PASSE JAMAIS À IDLE
 function doCombatUnit(u, dt) {
+  // ── Décompte stimulant ──
+  if(u.stimActive){ u.stimTimer-=dt; if(u.stimTimer<=0) u.stimActive=false; }
+
   // ── Retraite si PV critiques (< 25%) ──
   const hpRatio = u.hp / u.maxHp;
   if(hpRatio < 0.25 && u.type !== 'tank'){
@@ -712,16 +717,19 @@ function doCombatUnit(u, dt) {
     if(isTank && d <= UNIT_TYPES.tank.range * 3){
       u.siegeMode = 'deploying'; u.siegeTimer = 2; return;
     }
-    let stimMult = (factions[u.faction]?.stimResearched && (u.type==='marine'||u.type==='marauder')) ? 1.5 : 1;
-    u.x += Math.cos(u.angle) * u.speed * stimMult * 60 * dt;
-    u.y += Math.sin(u.angle) * u.speed * stimMult * 60 * dt;
+    u.x += Math.cos(u.angle) * u.speed * (u.stimActive?1.5:1) * 60 * dt;
+    u.y += Math.sin(u.angle) * u.speed * (u.stimActive?1.5:1) * 60 * dt;
   } else {
+    // ── Auto-stim à l'engagement ──
+    if(!u.stimActive && factions[u.faction]?.stimResearched && (u.type==='marine'||u.type==='marauder') && u.hp > u.maxHp*0.4){
+      u.hp = Math.max(1, u.hp * 0.67);
+      u.stimActive = true; u.stimTimer = 15;
+    }
     if(u.attackCooldown<=0){
       let died = damageEntity(target, u.attack, u);
       spawnBullet(u.x, u.y, target.x, target.y, u.faction);
-      let stimMult = (factions[u.faction]?.stimResearched && (u.type==='marine'||u.type==='marauder')) ? 1.5 : 1;
       let cd = u.type==='marauder' ? 1.2+Math.random()*0.3 : 0.7+Math.random()*0.35;
-      u.attackCooldown = cd / stimMult;
+      u.attackCooldown = cd / (u.stimActive?1.5:1);
       if(died){ u.killCount++; factions[u.faction].stats.killCount++; }
     }
     u.attackCooldown = Math.max(0, u.attackCooldown - dt);
@@ -1478,6 +1486,8 @@ function drawUnits(){
       ctx.fillRect(u.x-u.size, u.y-u.size-9, ew*er, 2);
       continue;
     } else if(u.type==='marauder'){
+      // Halo stim
+      if(u.stimActive){ ctx.shadowBlur=18; ctx.shadowColor='#fff'; }
       // Corps trapu : hexagone aplati
       ctx.beginPath();
       ctx.moveTo(u.size*1.2, 0);
@@ -1488,10 +1498,12 @@ function drawUnits(){
       ctx.lineTo(u.size*0.6, u.size*0.9);
       ctx.closePath(); ctx.fill();
       // Indicateur blindage
-      ctx.shadowBlur=0; ctx.strokeStyle='rgba(255,255,255,0.4)'; ctx.lineWidth=1.5;
+      ctx.shadowBlur=0; ctx.strokeStyle=u.stimActive?'rgba(255,255,255,0.9)':'rgba(255,255,255,0.4)'; ctx.lineWidth=1.5;
       ctx.stroke();
     } else if(u.type==='marine'){
+      if(u.stimActive){ ctx.shadowBlur=14; ctx.shadowColor='#fff'; }
       ctx.beginPath();ctx.moveTo(u.size,0);ctx.lineTo(-u.size/2,-u.size/2);ctx.lineTo(-u.size/2,u.size/2);ctx.closePath();ctx.fill();
+      ctx.shadowBlur=0;
     } else {
       // Tank
       ctx.fillRect(-u.size,-u.size/1.5,u.size*2,u.size*1.3);
