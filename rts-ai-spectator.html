@@ -183,7 +183,7 @@ let resourceHistory={}, lastResourceSample=0;
 
 const UNIT_TYPES = {
   worker:   {hp:40,  speed:0.6,  attack:3,  range:15, size:4},
-  soldier:  {hp:50,  speed:0.9,  attack:12, range:35, size:5},
+  marine:   {hp:50,  speed:0.9,  attack:12, range:35, size:5},
   marauder: {hp:80,  speed:0.7,  attack:20, range:38, size:6, armored:true},
   tank:     {hp:220, speed:0.45, attack:20, siegeAttack:45, range:55, size:7},
   medivac:  {hp:120, speed:1.1,  attack:0,  range:100, size:6, healRate:40, cargoMax:4, maxEnergy:100, energyDrain:20, energyRegen:10},
@@ -331,13 +331,13 @@ function updateGame(dt) {
     if(b.type==='barracks'){
       b.spawnTimer-=dt;
       if(b.spawnTimer<=0){
-        let infantry=myUnits(b.faction).filter(u=>u.type==='soldier'||u.type==='marauder');
+        let infantry=myUnits(b.faction).filter(u=>u.type==='marine'||u.type==='marauder');
         if(infantry.length<18){
           let marauders=infantry.filter(u=>u.type==='marauder').length;
-          let soldiers2=infantry.filter(u=>u.type==='soldier').length;
-          let spawnType=(soldiers2>=marauders*2)?'marauder':'soldier';
-          let cost=spawnType==='marauder'?75:50;
-          if(f.resources>=cost){f.resources-=cost;units.push(makeUnit(b.faction,spawnType,b.x+(Math.random()-0.5)*30,b.y+(Math.random()-0.5)*30));b.spawnTimer=spawnType==='marauder'?13:10;}
+          let soldiers2=infantry.filter(u=>u.type==='marine').length;
+          let spawnType=(soldiers2>=marauders*2)?'marauder':'marine';
+          let cost=spawnType==='marauder'?75:50, costVesp=spawnType==='marauder'?25:0;
+          if(f.resources>=cost&&f.vespene>=costVesp){f.resources-=cost;f.vespene-=costVesp;units.push(makeUnit(b.faction,spawnType,b.x+(Math.random()-0.5)*30,b.y+(Math.random()-0.5)*30));b.spawnTimer=spawnType==='marauder'?13:10;}
           else b.spawnTimer=4;
         } else b.spawnTimer=4;
       }
@@ -552,7 +552,7 @@ function doMedivac(u, dt){
   if(!healed) u.energy = Math.min(mt.maxEnergy, u.energy + mt.energyRegen * dt);
 
   // ── Se positionner sur l'allié le plus blessé à portée de soin ──
-  let combatAllies = allies.filter(v=>v.type==='soldier'||v.type==='marauder'||v.type==='tank');
+  let combatAllies = allies.filter(v=>v.type==='marine'||v.type==='marauder'||v.type==='tank');
 
   // Priorité : allié blessé le plus proche
   let mostWounded = combatAllies.filter(v=>v.hp<v.maxHp*0.8)
@@ -731,7 +731,7 @@ function resolveTarget(u) {
 }
 
 function pickCombatTarget(u) {
-  if(u.type==='soldier'||u.type==='marauder'||u.type==='tank'){
+  if(u.type==='marine'||u.type==='marauder'||u.type==='tank'){
     let eb = visibleEnemyBuildings(u.faction);
     let hqs = eb.filter(b=>b.type==='hq');
     if(hqs.length) return findClosest(hqs, u.x, u.y);
@@ -868,12 +868,12 @@ function spawnExplosion(x,y,color){
 }
 
 // ─── IA STRATÉGIQUE ───────────────────────────────────────────────────────────
-function milPower(fid){return myUnits(fid).filter(u=>u.type==='soldier').length+myUnits(fid).filter(u=>u.type==='marauder').length*1.5+myUnits(fid).filter(u=>u.type==='tank').length*3;}
+function milPower(fid){return myUnits(fid).filter(u=>u.type==='marine').length+myUnits(fid).filter(u=>u.type==='marauder').length*1.5+myUnits(fid).filter(u=>u.type==='tank').length*3;}
 
 function runAI(fid,dt) {
   const ai=aiState[fid], f=factions[fid], p=ai.params;
   const myB=myBuildings(fid), myU=myUnits(fid);
-  const soldiers=myU.filter(u=>u.type==='soldier'||u.type==='marauder'||u.type==='tank');
+  const soldiers=myU.filter(u=>u.type==='marine'||u.type==='marauder'||u.type==='tank');
   const workers=myU.filter(u=>u.type==='worker');
   const hq=buildings.find(b=>b.id===f.hqId);
   if(!hq) return;
@@ -888,7 +888,7 @@ function runAI(fid,dt) {
   // ── Analyse composition ennemie pour réponse adaptative ──
   const visibleEnemies = visibleEnemyUnits(fid);
   const enemyTankCount = visibleEnemies.filter(v=>v.type==='tank').length;
-  const enemyInfCount  = visibleEnemies.filter(v=>v.type==='soldier'||v.type==='marauder').length;
+  const enemyInfCount  = visibleEnemies.filter(v=>v.type==='marine'||v.type==='marauder').length;
   // Si beaucoup de tanks ennemis → forcer production maraudeurs (déjà géré par alternance, mais on peut ajuster le ratio)
   if(!ai.compositionHint) ai.compositionHint = 'balanced';
   if(enemyTankCount >= 3) ai.compositionHint = 'marauder'; // anti-tank
@@ -922,7 +922,7 @@ function runAI(fid,dt) {
   const scoutsNeeded = knownEnemyHQs.length===0 ? (explored<0.3 ? 2 : 1) : 0;
   const currentScouts = soldiers.filter(s=>s.state==='scout').length;
   if(currentScouts < scoutsNeeded){
-    let candidates = soldiers.filter(s=>s.state!=='scout' && s.type==='soldier'||s.type==='marauder');
+    let candidates = soldiers.filter(s=>s.state!=='scout' && s.type==='marine'||s.type==='marauder');
     let toAssign = scoutsNeeded - currentScouts;
     candidates.slice(0, toAssign).forEach(s=>{ s.state='scout'; s.scoutTarget=null; s.target=null; });
   }
@@ -1405,7 +1405,7 @@ function drawUnits(){
       // Indicateur blindage
       ctx.shadowBlur=0; ctx.strokeStyle='rgba(255,255,255,0.4)'; ctx.lineWidth=1.5;
       ctx.stroke();
-    } else if(u.type==='soldier'){
+    } else if(u.type==='marine'){
       ctx.beginPath();ctx.moveTo(u.size,0);ctx.lineTo(-u.size/2,-u.size/2);ctx.lineTo(-u.size/2,u.size/2);ctx.closePath();ctx.fill();
     } else {
       // Tank
@@ -1911,13 +1911,13 @@ function updateGameHeadless(dt){
     if(b.type==='barracks'){
       b.spawnTimer-=dt;
       if(b.spawnTimer<=0){
-        let infantry=myUnits(b.faction).filter(u=>u.type==='soldier'||u.type==='marauder');
+        let infantry=myUnits(b.faction).filter(u=>u.type==='marine'||u.type==='marauder');
         if(infantry.length<18){
           let marauders=infantry.filter(u=>u.type==='marauder').length;
-          let soldiers2=infantry.filter(u=>u.type==='soldier').length;
-          let spawnType=(soldiers2>=marauders*2)?'marauder':'soldier';
-          let cost=spawnType==='marauder'?75:50;
-          if(f.resources>=cost){f.resources-=cost;units.push(makeUnit(b.faction,spawnType,b.x+(Math.random()-0.5)*30,b.y+(Math.random()-0.5)*30));b.spawnTimer=spawnType==='marauder'?13:10;}
+          let soldiers2=infantry.filter(u=>u.type==='marine').length;
+          let spawnType=(soldiers2>=marauders*2)?'marauder':'marine';
+          let cost=spawnType==='marauder'?75:50, costVesp=spawnType==='marauder'?25:0;
+          if(f.resources>=cost&&f.vespene>=costVesp){f.resources-=cost;f.vespene-=costVesp;units.push(makeUnit(b.faction,spawnType,b.x+(Math.random()-0.5)*30,b.y+(Math.random()-0.5)*30));b.spawnTimer=spawnType==='marauder'?13:10;}
           else b.spawnTimer=4;
         } else b.spawnTimer=4;
       }
