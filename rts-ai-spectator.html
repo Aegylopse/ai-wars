@@ -1,0 +1,1897 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<title>AI Wars 4 — RTS Spectator</title>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=Orbitron:wght@400;700;900&family=Share+Tech+Mono&display=swap');
+  :root { --bg:#050a0f; --panel:#080f18; --border:#152535; --text:#7aaabb; --gold:#ffd700; }
+  * { margin:0; padding:0; box-sizing:border-box; }
+  body { background:var(--bg); color:var(--text); font-family:'Share Tech Mono',monospace; height:100vh; display:flex; flex-direction:column; overflow:hidden; }
+  header { display:flex; align-items:center; justify-content:space-between; padding:8px 14px; background:var(--panel); border-bottom:1px solid var(--border); flex-shrink:0; gap:8px; }
+  .title { font-family:'Orbitron',sans-serif; font-size:18px; font-weight:900; color:#00d4ff; letter-spacing:3px; text-shadow:0 0 15px #00d4ff; flex-shrink:0; }
+  .factions-bar { display:flex; gap:6px; flex:1; justify-content:center; }
+  .faction-card { display:flex; flex-direction:column; align-items:center; gap:2px; padding:5px 12px; border:1px solid; border-radius:3px; min-width:125px; font-size:12px; }
+  .faction-card .fname { font-family:'Orbitron',sans-serif; font-size:12px; font-weight:700; letter-spacing:2px; }
+  .faction-card .fstats { display:flex; gap:8px; }
+  .phase-badge { font-size:10px; padding:1px 5px; border-radius:2px; opacity:0.8; background:rgba(255,255,255,0.07); }
+  .gen-badge { font-size:10px; color:var(--gold); }
+  .controls { display:flex; gap:5px; align-items:center; flex-shrink:0; }
+  .btn { background:transparent; border:1px solid var(--border); color:var(--text); font-family:'Share Tech Mono',monospace; font-size:12px; padding:4px 10px; cursor:pointer; transition:all 0.15s; }
+  .btn:hover,.btn.active { border-color:#00d4ff; color:#00d4ff; box-shadow:0 0 6px rgba(0,212,255,0.3); }
+  .main { flex:1; display:flex; min-height:0; }
+  canvas { flex:1; display:block; cursor:crosshair; }
+  .sidebar { width:220px; background:var(--panel); border-left:1px solid var(--border); display:flex; flex-direction:column; padding:12px; gap:10px; font-size:12px; overflow-y:auto; }
+  .sidebar h3 { font-family:'Orbitron',sans-serif; font-size:11px; color:#00d4ff; letter-spacing:2px; border-bottom:1px solid var(--border); padding-bottom:5px; margin-bottom:5px; }
+  .log-entry { padding:3px 0; border-bottom:1px solid rgba(21,37,53,0.6); line-height:1.5; }
+  .learn-row { display:flex; justify-content:space-between; padding:2px 0; }
+  .learn-val { color:var(--gold); }
+  footer { padding:5px 14px; background:var(--panel); border-top:1px solid var(--border); font-size:11px; color:#2a4a6a; display:flex; justify-content:space-between; }
+  #gameOverlay { position:fixed; inset:0; background:rgba(5,10,15,0.96); display:flex; align-items:center; justify-content:center; z-index:100; flex-direction:column; gap:16px; }
+  #gameOverlay h1 { font-family:'Orbitron',sans-serif; font-size:42px; font-weight:900; }
+  #gameOverlay p { color:var(--text); font-size:15px; text-align:center; max-width:560px; line-height:1.6; }
+  .gen-info { display:flex; gap:14px; justify-content:center; flex-wrap:wrap; }
+  .gen-card { border:1px solid; padding:10px 16px; border-radius:4px; text-align:center; font-size:12px; font-family:'Share Tech Mono',monospace; }
+  .gen-card .gname { font-family:'Orbitron',sans-serif; font-size:13px; font-weight:700; margin-bottom:5px; }
+  .gen-card .gscore { font-size:20px; font-weight:700; color:var(--gold); }
+  #restartBtn { font-family:'Orbitron',sans-serif; font-size:14px; padding:11px 30px; background:transparent; border:2px solid #00d4ff; color:#00d4ff; cursor:pointer; letter-spacing:3px; transition:all 0.2s; }
+  #restartBtn:hover { background:#00d4ff; color:var(--bg); box-shadow:0 0 25px #00d4ff; }
+  #resetBtn { font-family:'Share Tech Mono',monospace; font-size:12px; padding:6px 14px; background:transparent; border:1px solid #ff3a3a44; color:#ff3a3a88; cursor:pointer; }
+  #resetBtn:hover { border-color:#ff3a3a; color:#ff3a3a; }
+</style>
+</head>
+<body>
+<header>
+  <div class="title">⬡ AI WARS 4</div>
+  <div class="factions-bar" id="factionsBar"></div>
+  <div class="controls">
+    <span style="font-size:12px;color:#2a4a6a">VIEW</span>
+    <button class="btn active" id="fogBtn-all" onclick="setFogFaction(null)">ALL</button>
+    <button class="btn" id="fogBtn-nord" onclick="setFogFaction('nord')">NORD</button>
+    <button class="btn" id="fogBtn-est" onclick="setFogFaction('est')">EST</button>
+    <button class="btn" id="fogBtn-sud" onclick="setFogFaction('sud')">SUD</button>
+    <button class="btn" id="fogBtn-ouest" onclick="setFogFaction('ouest')">OUEST</button>
+    <span style="font-size:12px;color:#2a4a6a;margin-left:4px">SPEED</span>
+    <button class="btn" onclick="setSpeed(0.5)">×½</button>
+    <button class="btn active" onclick="setSpeed(1)">×1</button>
+    <button class="btn" onclick="setSpeed(2)">×2</button>
+    <button class="btn" onclick="setSpeed(4)">×4</button>
+    <button class="btn" onclick="setSpeed(8)">×8</button>
+    <button class="btn" onclick="forceEndGame()" style="margin-left:8px;border-color:#ff3a3a44;color:#ff3a3a88" onmouseover="this.style.borderColor='#ff3a3a';this.style.color='#ff3a3a'" onmouseout="this.style.borderColor='#ff3a3a44';this.style.color='#ff3a3a88'">■ FIN</button>
+    <button class="btn" onclick="toggleStats()" id="statsBtn" style="margin-left:8px;border-color:#ffd70044;color:#ffd70088" onmouseover="this.style.borderColor='#ffd700';this.style.color='#ffd700'" onmouseout="this.style.borderColor='#ffd70044';this.style.color='#ffd70088'">📊 STATS</button>
+    <button class="btn" onclick="startSimulation(100)" id="simBtn" style="margin-left:8px;border-color:#44ff8844;color:#44ff8888" onmouseover="this.style.borderColor='#44ff88';this.style.color='#44ff88'" onmouseout="this.style.borderColor='#44ff8844';this.style.color='#44ff8888'">⚡ SIMULER ×100</button>
+  </div>
+</header>
+<div class="main">
+  <canvas id="canvas"></canvas>
+  <div class="sidebar">
+    <div><h3>CLASSEMENT</h3><div id="rankPanel"></div></div>
+    <div><h3>APPRENTISSAGE</h3><div id="learnPanel"></div></div>
+    <div><h3>BATTLE LOG</h3><div id="battleLog"></div></div>
+  </div>
+</div>
+<footer>
+  <span>SPECTATOR — 4 AI AGENTS — GEN <span id="genNum">1</span></span>
+  <span id="timerEl">00:00</span>
+  <span id="fpsEl">60 FPS</span>
+</footer>
+<div id="gameOverlay">
+  <h1 id="winnerText" style="color:#00d4ff">AI WARS 4</h1>
+  <p id="overlayDesc">4 agents IA s'affrontent. Chaque partie, ils analysent leurs résultats et adaptent leur stratégie : seuil d'assaut, priorité de cible, agressivité...</p>
+  <div class="gen-info" id="genCards"></div>
+  <button id="restartBtn" onclick="startGame()">▶ NOUVELLE PARTIE</button>
+  <button onclick="startSimulation(100)" style="font-family:'Share Tech Mono',monospace;font-size:11px;padding:6px 18px;background:transparent;border:1px solid #44ff8844;color:#44ff8888;cursor:pointer;letter-spacing:2px;" onmouseover="this.style.borderColor='#44ff88';this.style.color='#44ff88'" onmouseout="this.style.borderColor='#44ff8844';this.style.color='#44ff8888'">⚡ SIMULER ×100</button>
+  <button id="resetBtn" onclick="resetMemory()">↺ Effacer apprentissage</button>
+</div>
+
+<div id="simOverlay" style="display:none;position:fixed;inset:0;background:rgba(5,10,15,0.97);z-index:300;align-items:center;justify-content:center;flex-direction:column;gap:16px;">
+  <div style="font-family:'Orbitron',sans-serif;font-size:16px;font-weight:900;color:#44ff88;letter-spacing:3px;">⚡ SIMULATION EN COURS</div>
+  <div id="simStatus" style="font-size:11px;color:#7aaabb;">Partie 0 / 100</div>
+  <div style="width:400px;height:8px;background:#152535;border-radius:4px;overflow:hidden;">
+    <div id="simBar" style="height:100%;width:0%;background:#44ff88;transition:width 0.1s;border-radius:4px;"></div>
+  </div>
+  <div id="simLog" style="font-size:12px;color:#2a4a6a;height:60px;overflow:hidden;text-align:center;width:400px;"></div>
+</div>
+
+<div id="statsOverlay" style="display:none;position:fixed;inset:0;background:rgba(5,10,15,0.97);z-index:200;overflow-y:auto;padding:20px 24px;font-family:'Share Tech Mono',monospace;color:#7aaabb;">
+  <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:18px;">
+    <div style="font-family:'Orbitron',sans-serif;font-size:18px;font-weight:900;color:#00d4ff;letter-spacing:3px;">📊 STATISTIQUES IA</div>
+    <button onclick="toggleStats()" style="background:transparent;border:1px solid #152535;color:#7aaabb;font-family:'Share Tech Mono',monospace;font-size:11px;padding:4px 12px;cursor:pointer;">✕ FERMER</button>
+  </div>
+  <div id="statsContent"></div>
+</div>
+<script>
+// ─── CONFIG FACTIONS ─────────────────────────────────────────────────────────
+const FACTION_DEFS = [
+  { id:'nord',  name:'NORD',  color:'#00d4ff', dim:'#003850', pos:'TL' },
+  { id:'est',   name:'EST',   color:'#ff9500', dim:'#3d2000', pos:'TR' },
+  { id:'sud',   name:'SUD',   color:'#ff3a7a', dim:'#3d0020', pos:'BR' },
+  { id:'ouest', name:'OUEST', color:'#44ff88', dim:'#003320', pos:'BL' },
+];
+
+// ─── MÉMOIRE & APPRENTISSAGE ──────────────────────────────────────────────────
+const STORAGE_KEY = 'aiwars4_v2';
+
+function defaultParams() {
+  return {
+    assaultThreshold: 8,   // soldats requis avant d'attaquer
+    attackInterval:   18,  // secondes entre offensives
+    defenseRadius:    200, // rayon de surveillance HQ
+    expansionDrive:   0.5, // envie de construire des dépôts (0-1)
+    targetPriority:   'military', // 'military'|'workers'|'buildings'
+    harassEarly:      false,      // harcèlement avant assaut
+  };
+}
+
+function loadMemory() {
+  try {
+    let r = localStorage.getItem(STORAGE_KEY);
+    if(!r) return null;
+    let m = JSON.parse(r);
+    // Merger les agents manquants sans écraser l'existant
+    for(let fd of FACTION_DEFS){
+      if(!m.agents[fd.id]){
+        m.agents[fd.id] = { params: defaultParams(), history:[], wins:0, totalGames:0 };
+      } else {
+        // Compléter les paramètres manquants sans écraser
+        let def = defaultParams();
+        for(let k in def){
+          if(m.agents[fd.id].params[k] === undefined) m.agents[fd.id].params[k] = def[k];
+        }
+        if(!m.agents[fd.id].history) m.agents[fd.id].history = [];
+      }
+    }
+    if(!m.generation) m.generation = 0;
+    return m;
+  } catch(e){}
+  return null;
+}
+function saveMemory(m) { try { localStorage.setItem(STORAGE_KEY, JSON.stringify(m)); } catch(e){} }
+
+function freshMemory() {
+  return {
+    generation: 0,
+    agents: Object.fromEntries(FACTION_DEFS.map(f=>[f.id,{
+      params: defaultParams(), history:[], wins:0, totalGames:0
+    }]))
+  };
+}
+
+let agentMemory = loadMemory() || freshMemory();
+
+function resetMemory() {
+  agentMemory = freshMemory();
+  saveMemory(agentMemory);
+  document.getElementById('overlayDesc').textContent = 'Mémoire effacée. Les agents repartent de zéro.';
+  document.getElementById('genCards').innerHTML = '';
+  document.getElementById('genNum').textContent = '1';
+}
+
+// ─── GAME STATE ───────────────────────────────────────────────────────────────
+const canvas = document.getElementById('canvas');
+const ctx = canvas.getContext('2d');
+const overlay = document.getElementById('gameOverlay');
+let W, H, COLS, ROWS;
+const TILE = 20;
+let map=[], resources=[], buildings=[], units=[], particles=[], battleLog=[];
+let factions={}, aiState={};
+let gameRunning=false, speed=1, gameTime=0, lastTime=0, uid=0;
+let fogFaction=null; // null = vue globale (pas de brouillard)
+let fpsCount=0, fpsTimer=0, fpsCur=60, animFrame;
+
+const UNIT_TYPES = {
+  worker:   {hp:40,  speed:0.6,  attack:3,  range:15, size:4},
+  soldier:  {hp:50,  speed:0.9,  attack:12, range:35, size:5},
+  marauder: {hp:80,  speed:0.7,  attack:20, range:38, size:6, armored:true},
+  tank:     {hp:220, speed:0.45, attack:20, siegeAttack:45, range:55, size:7},
+  medivac:  {hp:120, speed:1.1,  attack:0,  range:100, size:6, healRate:40, cargoMax:4, maxEnergy:100, energyDrain:20, energyRegen:10},
+};
+const BUILDING_TYPES = {
+  hq:        {hp:600, size:28, cost:0,   costVespene:0,  label:'HQ' },
+  depot:     {hp:300, size:20, cost:100, costVespene:0,  label:'DEP'},
+  barracks:  {hp:200, size:20, cost:150, costVespene:0,  label:'BAR'},
+  factory:   {hp:250, size:22, cost:150, costVespene:75, label:'FAC'},
+  starport:  {hp:200, size:22, cost:100, costVespene:100,label:'STP'},
+};
+
+// ─── CANVAS & MAP ─────────────────────────────────────────────────────────────
+function resize() {
+  W=canvas.clientWidth; H=canvas.clientHeight;
+  canvas.width=W; canvas.height=H;
+  COLS=Math.floor(W/TILE); ROWS=Math.floor(H/TILE);
+}
+
+function generateMap() {
+  map=[];
+  for(let y=0;y<ROWS;y++){map[y]=[];for(let x=0;x<COLS;x++)map[y][x]=Math.random()<0.025?1:0;}
+  // Dégager les coins pour les bases
+  [[0,0],[COLS-8,0],[0,ROWS-8],[COLS-8,ROWS-8]].forEach(([cx,cy])=>{
+    for(let dy=0;dy<10;dy++)for(let dx=0;dx<10;dx++){let y=cy+dy,x=cx+dx;if(map[y])map[y][x]=0;}
+  });
+}
+
+function spawnResources() {
+  resources=[];
+  const S=20;
+  const offs=[{dx:-S,dy:-S},{dx:S,dy:-S},{dx:-S,dy:0},{dx:S,dy:0},{dx:-S,dy:S},{dx:S,dy:S}];
+  const clusters=[
+    {cx:W*0.13,cy:H*0.17},{cx:W*0.87,cy:H*0.17}, // bases
+    {cx:W*0.87,cy:H*0.83},{cx:W*0.13,cy:H*0.83},
+    {cx:W*0.38,cy:H*0.35},{cx:W*0.62,cy:H*0.35}, // centre
+    {cx:W*0.38,cy:H*0.65},{cx:W*0.62,cy:H*0.65},
+  ];
+  clusters.forEach(c=>{
+    // 6 cristaux de minerais par cluster
+    offs.forEach(o=>resources.push({x:c.cx+o.dx,y:c.cy+o.dy,amount:2000,maxAmount:2000,workerCount:0,type:'mineral'}));
+    // 2 cristaux de vespène par cluster (au centre, légèrement décalés)
+    resources.push({x:c.cx-8,y:c.cy+30,amount:1500,maxAmount:1500,workerCount:0,type:'vespene'});
+    resources.push({x:c.cx+8,y:c.cy+30,amount:1500,maxAmount:1500,workerCount:0,type:'vespene'});
+  });
+}
+
+// ─── FACTORY ─────────────────────────────────────────────────────────────────
+function makeUnit(fid,type,x,y) {
+  const t=UNIT_TYPES[type];
+  return {id:uid++,faction:fid,type,x,y,tx:x,ty:y,hp:t.hp,maxHp:t.hp,speed:t.speed,attack:t.attack,range:t.range,size:t.size,attackCooldown:0,state:'idle',target:null,resourceTarget:null,buildTarget:null,carrying:0,carryingVespene:0,angle:0,harvestPhase:'goToRes',killCount:0,
+    // Médivac uniquement
+    cargo:[],healCooldown:0,medState:'heal',dropTarget:null,
+    energy: type==='medivac' ? UNIT_TYPES.medivac.maxEnergy : undefined};
+}
+function makeBuilding(fid,type,x,y) {
+  const t=BUILDING_TYPES[type];
+  return {id:uid++,faction:fid,type,x,y,hp:type==='hq'?t.hp:1,maxHp:t.hp,size:t.size,buildProgress:type==='hq'?1:0,spawnTimer:0,attack:t.attack||0,range:t.range||0,attackCooldown:0,label:t.label};
+}
+
+// ─── START ────────────────────────────────────────────────────────────────────
+function startGame() {
+  overlay.style.display='none';
+  gameRunning=true; gameTime=0; uid=0;
+  battleLog=[]; document.getElementById('battleLog').innerHTML='';
+  buildings=[]; units=[]; particles=[]; resources=[]; factions={}; aiState={};
+  resize(); generateMap(); spawnResources(); initExploreGrid();
+  agentMemory.generation++;
+  document.getElementById('genNum').textContent=agentMemory.generation;
+
+  const hqPos=[
+    {x:W*0.08,y:H*0.10},{x:W*0.92,y:H*0.10},
+    {x:W*0.92,y:H*0.90},{x:W*0.08,y:H*0.90},
+  ];
+  FACTION_DEFS.forEach((fd,i)=>{
+    let hq=makeBuilding(fd.id,'hq',hqPos[i].x,hqPos[i].y);
+    buildings.push(hq);
+    factions[fd.id]={resources:200,vespene:0,hqId:hq.id,color:fd.color,dim:fd.dim,name:fd.name,eliminated:false,eliminatedAt:null,knownEnemyBuildings:new Set(),stats:{resourcesGathered:0,killCount:0,lossCount:0}};
+    for(let w=0;w<6;w++) units.push(makeUnit(fd.id,'worker',hq.x+(Math.random()-0.5)*50,hq.y+(Math.random()-0.5)*50));
+    const p=agentMemory.agents[fd.id].params;
+    aiState[fd.id]={phase:'economy',buildTimer:2+Math.random()*3,attackTimer:p.attackInterval*(0.8+Math.random()*0.4),params:JSON.parse(JSON.stringify(p))};
+  });
+
+  log('Génération '+agentMemory.generation+' — La bataille commence !','neutral');
+  buildHUD();
+  lastTime=performance.now();
+  if(animFrame) cancelAnimationFrame(animFrame);
+  loop(lastTime);
+}
+
+// ─── LOOP ─────────────────────────────────────────────────────────────────────
+function loop(ts) {
+  animFrame=requestAnimationFrame(loop);
+  let rawDt=Math.min((ts-lastTime)/1000,0.05); lastTime=ts;
+  fpsCount++; fpsTimer+=rawDt;
+  if(fpsTimer>=1){document.getElementById('fpsEl').textContent=fpsCount+' FPS';fpsCount=0;fpsTimer=0;}
+  if(!gameRunning) return;
+  // Subdivise en petits pas pour éviter les sauts à haute vitesse
+  const totalDt=rawDt*speed;
+  const maxStep=0.05; // max 50ms de simulation par sous-pas
+  const steps=Math.ceil(totalDt/maxStep);
+  const stepDt=totalDt/steps;
+  for(let i=0;i<steps;i++){gameTime+=stepDt;updateGame(stepDt);}
+  updateTimer(); render(); updateHUD();
+}
+function updateTimer(){let m=Math.floor(gameTime/60),s=Math.floor(gameTime%60);document.getElementById('timerEl').textContent=pad(m)+':'+pad(s);}
+function pad(n){return String(n).padStart(2,'0');}
+
+// ─── UPDATE ───────────────────────────────────────────────────────────────────
+function updateGame(dt) {
+  // Buildings
+  for(let b of buildings) {
+    if(b.buildProgress<1) continue;
+    const f=factions[b.faction]; if(!f||f.eliminated) continue;
+    if(b.attack>0){
+      b.attackCooldown-=dt;
+      if(b.attackCooldown<=0){
+        let en=activeEnemyUnits(b.faction);
+        let t=findClosestInRange(en,b.x,b.y,b.range);
+        if(t){damageEntity(t,b.attack);spawnBullet(b.x,b.y,t.x,t.y,b.faction);b.attackCooldown=1.4;}
+      }
+    }
+    if(b.type==='hq'||b.type==='depot'){
+      b.spawnTimer-=dt;
+      if(b.spawnTimer<=0){
+        if(b.type==='hq'){
+          let w=myUnits(b.faction).filter(u=>u.type==='worker').length;
+          if(w<10&&f.resources>=50){f.resources-=50;units.push(makeUnit(b.faction,'worker',b.x+(Math.random()-0.5)*40,b.y+(Math.random()-0.5)*40));b.spawnTimer=20;}
+          else b.spawnTimer=4;
+        } else b.spawnTimer=999;
+      }
+    }
+    if(b.type==='barracks'){
+      b.spawnTimer-=dt;
+      if(b.spawnTimer<=0){
+        let infantry=myUnits(b.faction).filter(u=>u.type==='soldier'||u.type==='marauder');
+        if(infantry.length<18){
+          let marauders=infantry.filter(u=>u.type==='marauder').length;
+          let soldiers2=infantry.filter(u=>u.type==='soldier').length;
+          let spawnType=(soldiers2>=marauders*2)?'marauder':'soldier';
+          let cost=spawnType==='marauder'?75:50;
+          if(f.resources>=cost){f.resources-=cost;units.push(makeUnit(b.faction,spawnType,b.x+(Math.random()-0.5)*30,b.y+(Math.random()-0.5)*30));b.spawnTimer=spawnType==='marauder'?13:10;}
+          else b.spawnTimer=4;
+        } else b.spawnTimer=4;
+      }
+    }
+    if(b.type==='factory'){
+      b.spawnTimer-=dt;
+      if(b.spawnTimer<=0){
+        let t=myUnits(b.faction).filter(u=>u.type==='tank').length;
+        if(t<6&&f.resources>=150&&f.vespene>=100){f.resources-=150;f.vespene-=100;units.push(makeUnit(b.faction,'tank',b.x+(Math.random()-0.5)*30,b.y+(Math.random()-0.5)*30));b.spawnTimer=22;}
+        else b.spawnTimer=4;
+      }
+    }
+    if(b.type==='starport'){
+      b.spawnTimer-=dt;
+      if(b.spawnTimer<=0){
+        let mv=myUnits(b.faction).filter(u=>u.type==='medivac').length;
+        if(mv<3&&f.resources>=100&&f.vespene>=100){f.resources-=100;f.vespene-=100;units.push(makeUnit(b.faction,'medivac',b.x+(Math.random()-0.5)*30,b.y+(Math.random()-0.5)*30));b.spawnTimer=28;}
+        else b.spawnTimer=4;
+      }
+    }
+  }
+
+  // Units
+  for(let i=units.length-1;i>=0;i--){
+    let u=units[i];
+    if(factions[u.faction]?.eliminated){units.splice(i,1);continue;}
+    u.attackCooldown=Math.max(0,u.attackCooldown-dt);
+
+    if(u.type==='worker'){
+      if(u.state==='idle')    assignWorkerTask(u);
+      else if(u.state==='harvest') doHarvest(u,dt);
+      else if(u.state==='attack')  doAttack(u,dt);
+      else if(u.state==='build')   doBuild(u,dt);
+    } else if(u.type==='medivac'){
+      doMedivac(u,dt);
+    } else {
+      // Soldats & tanks : éclaireur ou combat
+      if(u.state==='scout') doScout(u,dt);
+      else doCombatUnit(u,dt);
+    }
+
+    u.x=Math.max(u.size,Math.min(W-u.size,u.x));
+    u.y=Math.max(u.size,Math.min(H-u.size,u.y));
+  }
+
+  // Particles
+  for(let i=particles.length-1;i>=0;i--){let p=particles[i];p.x+=p.vx*dt;p.y+=p.vy*dt;p.life-=dt;if(p.life<=0)particles.splice(i,1);}
+
+  // AI
+  for(let fd of FACTION_DEFS) if(!factions[fd.id]?.eliminated){
+    updateExploreGrid(fd.id);
+    runAI(fd.id,dt);
+  }
+
+  checkEliminations();
+  checkWin();
+}
+
+// ─── UNIT HELPERS ─────────────────────────────────────────────────────────────
+function myUnits(fid){return units.filter(u=>u.faction===fid);}
+function myBuildings(fid){return buildings.filter(b=>b.faction===fid&&b.buildProgress>=1);}
+function dist(a,b){return Math.hypot(a.x-b.x,a.y-b.y);}
+function findClosest(arr,x,y){let best=null,bd=Infinity;for(let a of arr){let d=Math.hypot(a.x-x,a.y-y);if(d<bd){bd=d;best=a;}}return best;}
+function findClosestInRange(arr,x,y,range){let best=null,bd=Infinity;for(let a of arr){let d=Math.hypot(a.x-x,a.y-y);if(d<range&&d<bd){bd=d;best=a;}}return best;}
+function activeEnemyUnits(fid){return units.filter(v=>v.faction!==fid&&!factions[v.faction]?.eliminated);}
+function activeEnemyBuildings(fid){return buildings.filter(b=>b.faction!==fid&&b.buildProgress>=1&&!factions[b.faction]?.eliminated);}
+
+// ─── SYSTÈME DE VISION IA ─────────────────────────────────────────────────────
+const VISION_RADIUS = { worker:90, soldier:130, tank:160, hq:160, depot:100, barracks:110, factory:110, starport:110, medivac:140 };
+
+// Retourne tous les points de vision (x,y,r) d'une faction
+function getVisionCircles(fid){
+  let circles=[];
+  for(let u of units) if(u.faction===fid) circles.push({x:u.x,y:u.y,r:VISION_RADIUS[u.type]||100});
+  for(let b of buildings) if(b.faction===fid&&b.buildProgress>=1) circles.push({x:b.x,y:b.y,r:VISION_RADIUS[b.type]||100});
+  return circles;
+}
+
+// Vérifie si un point (x,y) est dans la vision d'une faction
+function isVisible(fid,x,y){
+  for(let c of getVisionCircles(fid)) if(Math.hypot(x-c.x,y-c.y)<=c.r) return true;
+  return false;
+}
+
+// Ennemis visibles (unités)
+function visibleEnemyUnits(fid){
+  return activeEnemyUnits(fid).filter(v=>isVisible(fid,v.x,v.y));
+}
+
+// Bâtiments ennemis visibles — une fois découvert, reste dans la "mémoire" de la faction
+function visibleEnemyBuildings(fid){
+  // Les bâtiments découverts sont mémorisés (ils ne bougent pas)
+  // On les révèle quand une unité passe dessus, ils restent connus jusqu'à destruction
+  let known = factions[fid]?.knownEnemyBuildings || new Set();
+  let result = [];
+  for(let b of activeEnemyBuildings(fid)){
+    if(isVisible(fid,b.x,b.y)){
+      known.add(b.id);
+    }
+    if(known.has(b.id)) result.push(b);
+  }
+  if(factions[fid]) factions[fid].knownEnemyBuildings = known;
+  return result;
+}
+
+// ─── CARTE D'EXPLORATION ─────────────────────────────────────────────────────
+// Grille basse résolution mémorisant les zones visitées par faction
+const EXPLORE_CELL = 80; // taille d'une cellule d'exploration en px
+let exploreGrid = {}; // exploreGrid[fid][cy][cx] = true si visité
+
+function initExploreGrid(){
+  exploreGrid = {};
+  for(let fd of FACTION_DEFS){
+    exploreGrid[fd.id] = {};
+  }
+}
+
+// Marque les cellules actuellement dans la vision comme explorées
+function updateExploreGrid(fid){
+  let cols = Math.ceil(W/EXPLORE_CELL), rows = Math.ceil(H/EXPLORE_CELL);
+  if(!exploreGrid[fid]) exploreGrid[fid]={};
+  for(let c of getVisionCircles(fid)){
+    let cx0=Math.max(0,Math.floor((c.x-c.r)/EXPLORE_CELL));
+    let cx1=Math.min(cols-1,Math.ceil((c.x+c.r)/EXPLORE_CELL));
+    let cy0=Math.max(0,Math.floor((c.y-c.r)/EXPLORE_CELL));
+    let cy1=Math.min(rows-1,Math.ceil((c.y+c.r)/EXPLORE_CELL));
+    for(let cy=cy0;cy<=cy1;cy++){
+      if(!exploreGrid[fid][cy]) exploreGrid[fid][cy]={};
+      for(let cx=cx0;cx<=cx1;cx++) exploreGrid[fid][cy][cx]=true;
+    }
+  }
+}
+
+// Retourne une destination non explorée, priorité aux coins adverses supposés
+function getUnexploredTarget(fid){
+  let cols=Math.ceil(W/EXPLORE_CELL), rows=Math.ceil(H/EXPLORE_CELL);
+  // Coins adverses (positions des HQ ennemis supposés selon position de départ)
+  const hq=buildings.find(b=>b.faction===fid&&b.type==='hq');
+  // Candidats : zones non visitées, favoriser celles loin du propre HQ
+  let best=null, bestScore=-Infinity;
+  // Échantillonnage aléatoire pour la perf (pas besoin de tout parcourir)
+  for(let attempt=0;attempt<40;attempt++){
+    let cx=Math.floor(Math.random()*cols), cy=Math.floor(Math.random()*rows);
+    if(exploreGrid[fid]?.[cy]?.[cx]) continue; // déjà exploré
+    let wx=cx*EXPLORE_CELL+EXPLORE_CELL/2, wy=cy*EXPLORE_CELL+EXPLORE_CELL/2;
+    // Score : distance au HQ (préférer zones lointaines) + un peu d'aléatoire
+    let d = hq ? Math.hypot(wx-hq.x,wy-hq.y) : 0;
+    let score = d + Math.random()*100;
+    if(score>bestScore){bestScore=score;best={x:wx,y:wy};}
+  }
+  // Fallback : coin opposé au HQ
+  if(!best&&hq) best={x:W-hq.x+(Math.random()-0.5)*100, y:H-hq.y+(Math.random()-0.5)*100};
+  return best || {x:W/2+(Math.random()-0.5)*200, y:H/2+(Math.random()-0.5)*200};
+}
+
+// Pourcentage de carte exploré par une faction (0-1)
+function exploreRatio(fid){
+  let cols=Math.ceil(W/EXPLORE_CELL), rows=Math.ceil(H/EXPLORE_CELL);
+  let total=cols*rows, visited=0;
+  for(let cy in exploreGrid[fid]) visited+=Object.keys(exploreGrid[fid][cy]).length;
+  return visited/total;
+}
+
+// ─── COMPORTEMENT ÉCLAIREUR ───────────────────────────────────────────────────
+function doScout(u, dt){
+  // Si ennemi visible dans un rayon proche → abandonner le scouting, combattre
+  let threat = findClosestInRange(visibleEnemyUnits(u.faction), u.x, u.y, u.range*2.5);
+  if(threat){
+    u.state='attack'; u.target=threat.id; u.scoutTarget=null;
+    return;
+  }
+
+  // Choisir/garder une destination d'exploration
+  if(!u.scoutTarget || Math.hypot(u.x-u.scoutTarget.x, u.y-u.scoutTarget.y)<25){
+    u.scoutTarget = getUnexploredTarget(u.faction);
+  }
+
+  moveTo(u, u.scoutTarget.x, u.scoutTarget.y, dt);
+  u.state = 'scout';
+  u.angle = Math.atan2(u.scoutTarget.y-u.y, u.scoutTarget.x-u.x);
+}
+
+function assignWorkerTask(u) {
+  let threat=findClosestInRange(visibleEnemyUnits(u.faction),u.x,u.y,55);
+  if(threat){u.state='attack';u.target=threat.id;return;}
+  let res=resources.filter(r=>r.amount>0&&r.workerCount<2);
+  if(!res.length) res=resources.filter(r=>r.amount>0);
+  if(res.length){
+    let best=res.reduce((a,b)=>{let da=Math.hypot(a.x-u.x,a.y-u.y)+a.workerCount*60,db=Math.hypot(b.x-u.x,b.y-u.y)+b.workerCount*60;return da<db?a:b;});
+    u.resourceTarget=resources.indexOf(best); u.state='harvest'; u.harvestPhase='goToRes';
+  }
+}
+
+// ─── MÉDIVAC ─────────────────────────────────────────────────────────────────
+function doMedivac(u, dt){
+  const t = UNIT_TYPES.medivac;
+  const allies = units.filter(v=>v.faction===u.faction && v!==u && v.type!=='medivac' && !v.inMedivac);
+
+  // ── Soin continu des alliés blessés à portée (si énergie disponible) ──
+  const mt = UNIT_TYPES.medivac;
+  if(u.energy === undefined) u.energy = mt.maxEnergy;
+  let wounded = allies.filter(v=>v.hp<v.maxHp && dist(u,v)<=u.range);
+  let healed = false;
+  if(u.energy > 0){
+    for(let v of wounded){
+      v.hp = Math.min(v.maxHp, v.hp + t.healRate * dt);
+      healed = true;
+      if(Math.random()<0.2) particles.push({x:v.x+(Math.random()-0.5)*8,y:v.y-v.size-4,vx:(Math.random()-0.5)*15,vy:-30,life:0.35,maxLife:0.35,color:'#00ff88',type:'heal',size:2.5});
+    }
+    if(healed) u.energy = Math.max(0, u.energy - mt.energyDrain * dt);
+  }
+  if(!healed) u.energy = Math.min(mt.maxEnergy, u.energy + mt.energyRegen * dt);
+
+  // ── Se positionner sur l'allié le plus blessé à portée de soin ──
+  let combatAllies = allies.filter(v=>v.type==='soldier'||v.type==='marauder'||v.type==='tank');
+
+  // Priorité : allié blessé le plus proche
+  let mostWounded = combatAllies.filter(v=>v.hp<v.maxHp*0.8)
+    .sort((a,b)=>(a.hp/a.maxHp)-(b.hp/b.maxHp))[0];
+
+  if(mostWounded){
+    // Suivre l'allié le plus blessé
+    let d = dist(u, mostWounded);
+    if(d > u.range * 0.6){
+      moveTo(u, mostWounded.x, mostWounded.y, dt);
+      u.angle = Math.atan2(mostWounded.y-u.y, mostWounded.x-u.x);
+    } else {
+      // Orbiter autour de lui
+      let a = Math.atan2(u.y-mostWounded.y, u.x-mostWounded.x) + dt*1.2;
+      moveTo(u, mostWounded.x+Math.cos(a)*50, mostWounded.y+Math.sin(a)*50, dt);
+    }
+    return;
+  }
+
+  // Pas de blessé → suivre le groupe de combat
+  if(combatAllies.length){
+    let center = combatAllies.reduce((acc,v)=>({x:acc.x+v.x/combatAllies.length,y:acc.y+v.y/combatAllies.length}),{x:0,y:0});
+    let d = dist(u, center);
+    if(d > u.range * 0.7){
+      moveTo(u, center.x, center.y, dt);
+      u.angle = Math.atan2(center.y-u.y, center.x-u.x);
+    } else {
+      let a = Math.atan2(u.y-center.y, u.x-center.x) + dt*0.8;
+      moveTo(u, center.x+Math.cos(a)*60, center.y+Math.sin(a)*60, dt);
+    }
+    return;
+  }
+
+  // Personne à soigner → revenir au HQ
+  let hq = buildings.find(b=>b.faction===u.faction&&b.type==='hq'&&b.buildProgress>=1);
+  if(hq && dist(u,hq)>80) moveTo(u, hq.x, hq.y, dt);
+}
+
+// ─── COMBAT ──────────────────────────────────────────────────────────────────
+// Logique combat unité militaire — NE PASSE JAMAIS À IDLE
+function doCombatUnit(u, dt) {
+  // ── Retraite si PV critiques (< 25%) ──
+  const hpRatio = u.hp / u.maxHp;
+  if(hpRatio < 0.25 && u.type !== 'tank'){
+    // Fuir vers le QG allié
+    let hq = buildings.find(b=>b.faction===u.faction&&b.type==='hq'&&b.buildProgress>=1);
+    if(hq){
+      u.state = 'retreat';
+      moveTo(u, hq.x + (Math.random()-0.5)*40, hq.y + (Math.random()-0.5)*40, dt);
+      u.angle = Math.atan2(hq.y-u.y, hq.x-u.x);
+      // Se soigner légèrement pendant la retraite (régén naturelle)
+      u.hp = Math.min(u.maxHp, u.hp + 2 * dt);
+      return;
+    }
+  }
+  // Sortir de retraite si PV > 60%
+  if(u.state === 'retreat' && hpRatio >= 0.6) u.state = 'attack';
+
+  const isTank = u.type === 'tank';
+
+  // ── Mode siège ──
+  if(isTank){
+    // Transition vers siège
+    if(u.siegeMode === 'deploying'){
+      u.siegeTimer -= dt;
+      if(u.siegeTimer <= 0){ u.siegeMode = 'siege'; u.siegeTimer = 0; }
+      return; // immobile pendant déploiement
+    }
+    // Transition vers mobile
+    if(u.siegeMode === 'undeploying'){
+      u.siegeTimer -= dt;
+      if(u.siegeTimer <= 0){ u.siegeMode = null; u.siegeTimer = 0; }
+      return;
+    }
+
+    const baseSiegeRange = UNIT_TYPES.tank.range * 3;
+
+    if(u.siegeMode === 'siege'){
+      // En siège : tir en zone, portée ×4, immobile
+      if(u.attackCooldown > 0){ u.attackCooldown -= dt; return; }
+      // Chercher cible à portée de siège
+      let allEnemies = [...visibleEnemyUnits(u.faction), ...visibleEnemyBuildings(u.faction)];
+      let t = findClosestInRange(allEnemies, u.x, u.y, baseSiegeRange);
+      if(t){
+        // Dégâts en zone : touche tout dans un rayon de 30px autour de la cible
+        const siegeDmg = UNIT_TYPES.tank.siegeAttack;
+        let aoeTargets = [...units, ...buildings].filter(v=>{
+          if(!v.faction || v.faction === u.faction) return false;
+          if(factions[v.faction]?.eliminated) return false;
+          return Math.hypot(v.x-t.x, v.y-t.y) <= 30;
+        });
+        let killed = false;
+        for(let av of aoeTargets){
+          if(damageEntity(av, siegeDmg * 0.7, u)){ u.killCount++; factions[u.faction].stats.killCount++; killed=true; }
+        }
+        // Dégâts plein sur la cible principale
+        if(units.includes(t)||buildings.includes(t)){
+          if(damageEntity(t, siegeDmg, u)){ u.killCount++; factions[u.faction].stats.killCount++; }
+        }
+        spawnBullet(u.x, u.y, t.x, t.y, u.faction);
+        // Particule d'explosion AOE
+        spawnExplosion(t.x, t.y, FACTION_DEFS.find(f=>f.id===u.faction)?.color||'#fff');
+        u.attackCooldown = 1.8;
+        u.angle = Math.atan2(t.y-u.y, t.x-u.x);
+      } else {
+        // Pas de cible à portée → quitter le siège
+        u.siegeMode = 'undeploying'; u.siegeTimer = 2;
+      }
+      return;
+    }
+
+    // Mode mobile : décider de se mettre en siège si ennemi à portée siège mais hors portée normale
+    let nearSiege = findClosestInRange(visibleEnemyUnits(u.faction), u.x, u.y, baseSiegeRange);
+    let nearNormal = findClosestInRange(visibleEnemyUnits(u.faction), u.x, u.y, u.range * 1.5);
+    if(nearSiege && !nearNormal){
+      // Ennemi à portée siège mais pas à portée normale → déployer
+      u.siegeMode = 'deploying'; u.siegeTimer = 2; return;
+    }
+  }
+
+  let target = resolveTarget(u);
+
+  if(!target){
+    let cx = W/2 + (Math.random()-0.5)*100;
+    let cy = H/2 + (Math.random()-0.5)*100;
+    moveTo(u, cx, cy, dt);
+    u.state = 'attack';
+    return;
+  }
+
+  u.target = target.id;
+  u.state = 'attack';
+
+  let d = dist(u, target);
+  u.angle = Math.atan2(target.y-u.y, target.x-u.x);
+
+  if(d > u.range){
+    // Si c'est un tank et la cible est à portée siège → déployer
+    if(isTank && d <= UNIT_TYPES.tank.range * 3){
+      u.siegeMode = 'deploying'; u.siegeTimer = 2; return;
+    }
+    u.x += Math.cos(u.angle) * u.speed * 60 * dt;
+    u.y += Math.sin(u.angle) * u.speed * 60 * dt;
+  } else {
+    if(u.attackCooldown<=0){
+      let died = damageEntity(target, u.attack, u);
+      spawnBullet(u.x, u.y, target.x, target.y, u.faction);
+      let cd = u.type==='marauder' ? 1.2+Math.random()*0.3 : 0.7+Math.random()*0.35;
+      u.attackCooldown = cd;
+      if(died){ u.killCount++; factions[u.faction].stats.killCount++; }
+    }
+    u.attackCooldown = Math.max(0, u.attackCooldown - dt);
+  }
+}
+
+// Résoudre la cible d'une unité de combat
+function resolveTarget(u) {
+  // 0. Cible opportuniste : ennemi visible à portée d'attaque (priorité absolue)
+  let immediate = findClosestInRange(visibleEnemyUnits(u.faction), u.x, u.y, u.range * 1.5);
+  if(immediate) return immediate;
+
+  // 1. Essayer la cible actuelle
+  if(u.target !== null){
+    let t = units.find(v=>v.id===u.target);
+    if(!t) t = buildings.find(b=>b.id===u.target && b.buildProgress>=1);
+    if(t && t.hp>0 && !factions[t.faction]?.eliminated){
+      // Bâtiment connu → continuer à avancer même hors vision
+      if(!t.hasOwnProperty('speed')) return t;
+      // Unité : doit rester visible
+      if(isVisible(u.faction, t.x, t.y)) return t;
+    }
+  }
+  // 2. Chercher une nouvelle cible visible
+  u.target = null;
+  return pickCombatTarget(u);
+}
+
+function pickCombatTarget(u) {
+  if(u.type==='soldier'||u.type==='marauder'||u.type==='tank'){
+    let eb = visibleEnemyBuildings(u.faction);
+    let hqs = eb.filter(b=>b.type==='hq');
+    if(hqs.length) return findClosest(hqs, u.x, u.y);
+    let prod = eb.filter(b=>b.type==='barracks'||b.type==='factory'||b.type==='starport');
+    if(prod.length) return findClosest(prod, u.x, u.y);
+    let soft = eb.filter(b=>b.type!=='hq');
+    if(soft.length) return findClosest(soft, u.x, u.y);
+    let en = visibleEnemyUnits(u.faction);
+    if(en.length) return findClosest(en, u.x, u.y);
+    if(eb.length) return findClosest(eb, u.x, u.y);
+  } else {
+    let en = visibleEnemyUnits(u.faction).filter(v=>v.type!=='worker');
+    let close = findClosestInRange(en, u.x, u.y, 50);
+    if(close) return close;
+  }
+  return null;
+}
+
+function doHarvest(u,dt) {
+  let res=resources[u.resourceTarget];
+  if(!res||res.amount<=0){if(res)res.workerCount=Math.max(0,res.workerCount-1);u.state='idle';u.resourceTarget=null;u.harvestPhase='goToRes';return;}
+  if(!u.harvestPhase) u.harvestPhase='goToRes';
+
+  if(u.harvestPhase==='goToRes'){
+    if(dist(u,res)>10) moveTo(u,res.x,res.y,dt);
+    else{u.harvestPhase='mining';res.workerCount++;}
+  } else if(u.harvestPhase==='mining'){
+    let isVesp = res.type==='vespene';
+    let cap = isVesp ? u.carryingVespene : u.carrying;
+    let taken=Math.min((50/1.0)*dt, res.amount, 50-cap);
+    res.amount-=taken;
+    if(isVesp) u.carryingVespene+=taken; else u.carrying+=taken;
+    let full = isVesp ? u.carryingVespene>=50 : u.carrying>=50;
+    if(full||res.amount<=0){res.workerCount=Math.max(0,res.workerCount-1);u.harvestPhase='returnToBase';}
+  } else if(u.harvestPhase==='returnToBase'){
+    let depots=buildings.filter(b=>b.faction===u.faction&&(b.type==='hq'||b.type==='depot')&&b.buildProgress>=1);
+    let base=depots.reduce((best,b)=>!best||dist(u,b)<dist(u,best)?b:best,null);
+    if(!base){u.state='idle';return;}
+    if(dist(u,base)>18) moveTo(u,base.x,base.y,dt);
+    else{
+      factions[u.faction].resources+=Math.floor(u.carrying);
+      factions[u.faction].vespene  +=Math.floor(u.carryingVespene);
+      factions[u.faction].stats.resourcesGathered+=Math.floor(u.carrying)+Math.floor(u.carryingVespene);
+      u.carrying=0; u.carryingVespene=0;
+      u.harvestPhase='goToRes';
+      if(res.amount<=0){u.state='idle';u.resourceTarget=null;}
+    }
+  }
+  if(u.harvestPhase!=='returnToBase'){
+    let threat=findClosestInRange(visibleEnemyUnits(u.faction),u.x,u.y,45);
+    if(threat){
+      if(u.harvestPhase==='mining'&&u.resourceTarget!=null) resources[u.resourceTarget].workerCount=Math.max(0,resources[u.resourceTarget].workerCount-1);
+      u.state='attack';u.target=threat.id;u.harvestPhase='goToRes';
+    }
+  }
+}
+
+// doAttack : uniquement pour les workers (combat défensif)
+function doAttack(u,dt) {
+  let target = units.find(v=>v.id===u.target);
+  if(!target) target = buildings.find(b=>b.id===u.target && b.buildProgress>=1);
+  if(!target || target.hp<=0 || factions[target.faction]?.eliminated){
+    u.target = null; u.state = 'idle'; return; // worker retourne récolter
+  }
+  let d = dist(u, target);
+  u.angle = Math.atan2(target.y-u.y, target.x-u.x);
+  if(d > u.range){
+    u.x += Math.cos(u.angle)*u.speed*60*dt;
+    u.y += Math.sin(u.angle)*u.speed*60*dt;
+  } else {
+    if(u.attackCooldown<=0){
+      let died = damageEntity(target, u.attack, u);
+      spawnBullet(u.x,u.y,target.x,target.y,u.faction);
+      u.attackCooldown = 0.9 + Math.random()*0.4;
+      if(died){ factions[u.faction].stats.killCount++; }
+    }
+  }
+}
+
+function doBuild(u,dt) {
+  let b=buildings.find(bl=>bl.id===u.buildTarget);
+  if(!b){u.state='idle';u.buildTarget=null;return;}
+  if(dist(u,b)>20) moveTo(u,b.x,b.y,dt);
+  else{
+    b.buildProgress=Math.min(1,b.buildProgress+0.28*dt);
+    if(b.buildProgress>=1){b.hp=b.maxHp;u.state='idle';u.buildTarget=null;log(`${factions[u.faction].name} — ${b.label} opérationnel`,u.faction);}
+  }
+}
+
+function moveTo(u,tx,ty,dt) {
+  let dx=tx-u.x,dy=ty-u.y,d=Math.hypot(dx,dy);
+  if(d<2) return;
+  u.angle=Math.atan2(dy,dx);
+  u.x+=(dx/d)*u.speed*60*dt;
+  u.y+=(dy/d)*u.speed*60*dt;
+}
+
+// ─── DAMAGE ───────────────────────────────────────────────────────────────────
+function damageEntity(target, dmg, attacker=null) {
+  // Blindage maraudeur : -20% de dégâts si attaquant est lourd (tank)
+  if(target.type==='marauder' && attacker && attacker.type==='tank') dmg *= 0.8;
+  // Bonus tank vs non-blindés (soldats, workers, medivacs)
+  if(attacker && attacker.type==='tank' && target.type && !UNIT_TYPES[target.type]?.armored) dmg *= 1.25;
+  target.hp-=dmg;
+  if(target.hp<=0){
+    target.hp=0; // évite les valeurs négatives
+    let col=FACTION_DEFS.find(f=>f.id===target.faction)?.color||'#fff';
+    spawnExplosion(target.x,target.y,col);
+    if(target.hasOwnProperty('speed')){
+      // Unité
+      let idx=units.indexOf(target);
+      if(idx!==-1){units.splice(idx,1);if(factions[target.faction])factions[target.faction].stats.lossCount++;}
+    } else {
+      // Bâtiment — supprimé immédiatement, ne produit plus rien
+      let idx=buildings.indexOf(target);
+      if(idx!==-1){
+        buildings.splice(idx,1);
+        for(let fid in factions) factions[fid].knownEnemyBuildings?.delete(target.id);
+        log(`${factions[target.faction]?.name||'?'} — ${target.label} détruit`,target.faction);
+      }
+    }
+    return true;
+  }
+  return false;
+}
+
+function spawnBullet(x,y,tx,ty,fid){
+  let dx=tx-x,dy=ty-y,d=Math.hypot(dx,dy)||1,spd=280;
+  let col=FACTION_DEFS.find(f=>f.id===fid)?.color||'#fff';
+  particles.push({x,y,vx:(dx/d)*spd,vy:(dy/d)*spd,life:d/spd,maxLife:d/spd,color:col,type:'bullet',size:2.5});
+}
+function spawnExplosion(x,y,color){
+  for(let i=0;i<14;i++){let a=Math.random()*Math.PI*2,spd=60+Math.random()*120;particles.push({x,y,vx:Math.cos(a)*spd,vy:Math.sin(a)*spd,life:0.5+Math.random()*0.4,maxLife:0.9,color,type:'spark',size:2+Math.random()*3});}
+}
+
+// ─── IA STRATÉGIQUE ───────────────────────────────────────────────────────────
+function milPower(fid){return myUnits(fid).filter(u=>u.type==='soldier').length+myUnits(fid).filter(u=>u.type==='marauder').length*1.5+myUnits(fid).filter(u=>u.type==='tank').length*3;}
+
+function runAI(fid,dt) {
+  const ai=aiState[fid], f=factions[fid], p=ai.params;
+  const myB=myBuildings(fid), myU=myUnits(fid);
+  const soldiers=myU.filter(u=>u.type==='soldier'||u.type==='marauder'||u.type==='tank');
+  const workers=myU.filter(u=>u.type==='worker');
+  const hq=buildings.find(b=>b.id===f.hqId);
+  if(!hq) return;
+
+  const myPow=milPower(fid);
+  const liveFactions=FACTION_DEFS.filter(fd=>fd.id!==fid&&!factions[fd.id].eliminated);
+  const enemyPow=liveFactions.reduce((s,fd)=>s+milPower(fd.id),0);
+  const visibleThreats=visibleEnemyUnits(fid).filter(v=>dist(v,hq)<p.defenseRadius);
+  const nearbyThreats=visibleThreats.length;
+  const barracks=myB.filter(b=>b.type==='barracks').length;
+
+  // ── Analyse composition ennemie pour réponse adaptative ──
+  const visibleEnemies = visibleEnemyUnits(fid);
+  const enemyTankCount = visibleEnemies.filter(v=>v.type==='tank').length;
+  const enemyInfCount  = visibleEnemies.filter(v=>v.type==='soldier'||v.type==='marauder').length;
+  // Si beaucoup de tanks ennemis → forcer production maraudeurs (déjà géré par alternance, mais on peut ajuster le ratio)
+  if(!ai.compositionHint) ai.compositionHint = 'balanced';
+  if(enemyTankCount >= 3) ai.compositionHint = 'marauder'; // anti-tank
+  else if(enemyInfCount >= 8) ai.compositionHint = 'tank';  // anti-infanterie
+  else ai.compositionHint = 'balanced';
+
+  // ── Alliances temporaires : deux factions faibles s'unissent contre le leader ──
+  const strongest = FACTION_DEFS.filter(fd=>!factions[fd.id]?.eliminated)
+    .reduce((best,fd)=>milPower(fd.id)>milPower(best.id)?fd:best, FACTION_DEFS[0]);
+  const isLeader = strongest.id === fid;
+  const allyFid = !isLeader && myPow < milPower(strongest.id) * 0.6
+    ? liveFactions.find(fd=>fd.id!==strongest.id&&milPower(fd.id)<milPower(strongest.id)*0.6)?.id
+    : null;
+  if(!ai.allyFid || Math.random()<0.01) ai.allyFid = allyFid; // mise à jour occasionnelle
+
+  // ── Transitions de phase ──
+  if(ai.phase==='economy'&&barracks>=1){ai.phase='expand';log(`${f.name} — EXPANSION`,fid);}
+  if(ai.phase==='expand'&&myPow>=p.assaultThreshold){ai.phase='assault';log(`${f.name} — ASSAUT !`,fid);}
+  if(ai.phase==='assault'&&myPow<3){ai.phase='expand';log(`${f.name} — Repli`,fid);}
+  if(ai.phase==='pressure'&&myPow<2) ai.phase='expand';
+
+  // ── Défense urgence (sur cibles visibles) ──
+  if(nearbyThreats>0){
+    soldiers.filter(s=>dist(s,hq)<p.defenseRadius*1.5).forEach(s=>{let t=findClosest(visibleThreats,s.x,s.y);if(t) s.target=t.id;});
+    if(nearbyThreats>=3) soldiers.filter(s=>dist(s,hq)>p.defenseRadius*1.5).forEach(s=>{let t=findClosest(visibleThreats,hq.x,hq.y);if(t) s.target=t.id;});
+  }
+
+  // ── Éclaireurs ──
+  const knownEnemyHQs = visibleEnemyBuildings(fid).filter(b=>b.type==='hq');
+  const explored = exploreRatio(fid);
+  const scoutsNeeded = knownEnemyHQs.length===0 ? (explored<0.3 ? 2 : 1) : 0;
+  const currentScouts = soldiers.filter(s=>s.state==='scout').length;
+  if(currentScouts < scoutsNeeded){
+    let candidates = soldiers.filter(s=>s.state!=='scout' && s.type==='soldier'||s.type==='marauder');
+    let toAssign = scoutsNeeded - currentScouts;
+    candidates.slice(0, toAssign).forEach(s=>{ s.state='scout'; s.scoutTarget=null; s.target=null; });
+  }
+  if(knownEnemyHQs.length>0){
+    soldiers.filter(s=>s.state==='scout').forEach(s=>{ s.state='attack'; s.scoutTarget=null; });
+  }
+
+  // ── Construction ──
+  ai.buildTimer-=dt;
+  if(ai.buildTimer<=0){
+    ai.buildTimer=3+Math.random()*3;
+    const factories=myB.filter(b=>b.type==='factory').length;
+    const depots=myB.filter(b=>b.type==='depot').length;
+    const res=f.resources;
+    const vesp=f.vespene;
+    const costBar = BUILDING_TYPES.barracks.cost;
+    const costFac = BUILDING_TYPES.factory.cost;
+    const costDep = BUILDING_TYPES.depot.cost;
+    const starports=myB.filter(b=>b.type==='starport').length;
+
+    let toBuild=null;
+    if(barracks<1&&res>=costBar) toBuild='barracks';
+    else if(factories<1&&res>=costFac&&barracks>=1&&soldiers.length>=3) toBuild='factory';
+    // Starport dès que vespène disponible
+    else if(starports<1&&res>=BUILDING_TYPES.starport.cost&&vesp>=BUILDING_TYPES.starport.costVespene&&factories>=1) toBuild='starport';
+    // Réponse adaptative : si hint anti-tank → plus de casernes ; si anti-inf → plus d'usines
+    else if(ai.compositionHint==='marauder'&&barracks<4&&res>=costBar) toBuild='barracks';
+    else if(ai.compositionHint==='tank'&&factories<3&&res>=costFac&&vesp>=BUILDING_TYPES.factory.costVespene) toBuild='factory';
+    else if(res>=costBar*4&&barracks<3) toBuild='barracks';
+    else if(res>=costFac*2.5&&factories<2&&barracks>=1) toBuild='factory';
+    else if(res>=costBar*7&&barracks<4) toBuild='barracks';
+    else if(res>=costFac*4&&factories<3&&barracks>=2) toBuild='factory';
+    else if(res>=costBar*12&&barracks<5) toBuild='barracks';
+    else if(res>=costFac*7.5&&factories<4&&barracks>=3) toBuild='factory';
+    else if(p.expansionDrive>0.4&&depots<2&&res>=costDep*2) toBuild='depot';
+    else if(depots<3&&res>=costDep*4) toBuild='depot';
+
+    if(toBuild){
+      let worker=workers.find(w=>w.state==='idle'||w.state==='harvest');
+      if(worker){
+        let bx,by;
+        if(toBuild==='depot'){
+          let freeRes=resources.filter(r=>r.amount>0&&Math.abs(r.x-W/2)<W*0.35&&Math.abs(r.y-H/2)<H*0.35);
+          let tr=freeRes.length?findClosest(freeRes,hq.x,hq.y):null;
+          bx=tr?tr.x+(Math.random()-0.5)*50:W/2+(fid==='nord'||fid==='ouest'?-80:80);
+          by=tr?tr.y+(Math.random()-0.5)*50:H/2+(fid==='nord'||fid==='est'?-60:60);
+        } else {
+          let cx=W/2,cy=H/2,dl=Math.hypot(cx-hq.x,cy-hq.y)||1;
+          bx=hq.x+((cx-hq.x)/dl)*(80+Math.random()*80)+(Math.random()-0.5)*60;
+          by=hq.y+((cy-hq.y)/dl)*(80+Math.random()*80)+(Math.random()-0.5)*60;
+        }
+        bx=Math.max(30,Math.min(W-30,bx)); by=Math.max(30,Math.min(H-30,by));
+        let cost=BUILDING_TYPES[toBuild].cost;
+        let costVesp=BUILDING_TYPES[toBuild].costVespene||0;
+        if(f.resources>=cost&&f.vespene>=costVesp){
+          f.resources-=cost; f.vespene-=costVesp;
+          let b=makeBuilding(fid,toBuild,bx,by);
+          buildings.push(b); worker.state='build'; worker.buildTarget=b.id;
+        }
+      }
+    }
+  }
+
+  // ── Logique d'attaque ──
+  ai.attackTimer-=dt;
+  if(ai.attackTimer>0) return;
+
+  const eUnits=visibleEnemyUnits(fid), eBuilds=visibleEnemyBuildings(fid);
+
+  // Cible : en alliance → frapper le leader ; sinon le plus faible
+  let targetFid = ai.allyFid ? strongest.id
+    : liveFactions.reduce((best,fd)=>!best||milPower(fd.id)<milPower(best.id)?fd:best,null)?.id;
+  let wid = targetFid;
+
+  // ── Point de ralliement : regrouper avant l'assaut ──
+  // Calculer le centre de gravité des troupes alliées
+  if(soldiers.length>0){
+    let cx=soldiers.reduce((s,u)=>s+u.x,0)/soldiers.length;
+    let cy=soldiers.reduce((s,u)=>s+u.y,0)/soldiers.length;
+    ai.rallyX=cx; ai.rallyY=cy;
+  }
+
+  if(ai.phase==='economy'){
+    ai.attackTimer=20;
+    if(p.harassEarly&&soldiers.length>=2){
+      let wk=eUnits.filter(v=>v.type==='worker');
+      if(wk.length>0){let s=soldiers[0],t=findClosest(wk,s.x,s.y);s.target=t.id;s.state='attack';}
+    }
+  } else if(ai.phase==='expand'){
+    ai.attackTimer=p.attackInterval*(0.8+Math.random()*0.4);
+    if(soldiers.length>=3){
+      let harassers=soldiers.slice(0,Math.min(3,Math.floor(soldiers.length*0.3)));
+      let pool=getTargetPool(fid,wid,p.targetPriority,eUnits,eBuilds);
+      harassers.forEach(s=>{let t=findClosest(pool,s.x,s.y);if(t){s.target=t.id;}});
+    }
+  } else if(ai.phase==='assault'){
+    ai.attackTimer = p.attackInterval*1.5; ai.phase='pressure';
+
+    // Regroupement : si les unités sont trop dispersées, les faire se rallier d'abord
+    const dispersal = soldiers.reduce((max,s)=>{
+      let d2=Math.hypot(s.x-(ai.rallyX||hq.x),s.y-(ai.rallyY||hq.y));
+      return Math.max(max,d2);
+    },0);
+    if(dispersal > 200 && soldiers.length >= 5){
+      // Trop dispersé → rallier avant d'attaquer
+      soldiers.forEach(s=>{s.tx=ai.rallyX; s.ty=ai.rallyY; s.state='attack';});
+      ai.attackTimer = 4; ai.phase='expand';
+      log(`${f.name} — Regroupement (dispersal=${Math.round(dispersal)}px)`,fid);
+      return;
+    }
+
+    let enemyHQ = wid ? buildings.find(b=>b.faction===wid&&b.type==='hq'&&b.buildProgress>=1) : null;
+    let pool = getTargetPool(fid, wid, p.targetPriority, eUnits, eBuilds);
+    soldiers.forEach(s=>{
+      if(enemyHQ && Math.random()<0.7){ s.target=enemyHQ.id; }
+      else { let t=findClosest(pool,s.x,s.y); if(t) s.target=t.id; }
+      s.state='attack';
+    });
+    log(`${f.name} — ASSAUT sur ${wid?factions[wid]?.name:'?'} (${soldiers.length} unités${ai.allyFid?' [ALLIANCE]':''})`,fid);
+
+  } else if(ai.phase==='pressure'){
+    ai.attackTimer = p.attackInterval*0.6;
+    if(myPow>=p.assaultThreshold*1.2&&myPow>enemyPow*0.6){ ai.phase='assault'; }
+    let groupSize = Math.max(2, Math.floor(soldiers.length*0.5));
+    let group = soldiers.filter(s=>s.state==='idle').slice(0,groupSize);
+    if(group.length<2) group = soldiers.slice(0,groupSize);
+    let enemyHQ = wid ? buildings.find(b=>b.faction===wid&&b.type==='hq'&&b.buildProgress>=1) : null;
+    let pool = getTargetPool(fid, wid, p.targetPriority, eUnits, eBuilds);
+    group.forEach(s=>{
+      if(enemyHQ && Math.random()<0.5){ s.target=enemyHQ.id; }
+      else { let t=findClosest(pool,s.x,s.y); if(t) s.target=t.id; }
+    });
+  }
+}
+
+function getTargetPool(fid,wid,priority,eUnits,eBuilds){
+  let wU = wid ? eUnits.filter(u=>u.faction===wid) : eUnits;
+  let wB = wid ? eBuilds.filter(b=>b.faction===wid) : eBuilds;
+  // Le HQ est TOUJOURS la cible ultime — mis en tête de liste
+  let wHQ = wB.filter(b=>b.type==='hq');
+  let wProd = wB.filter(b=>b.type==='barracks'||b.type==='factory');
+  let wSoft = wB.filter(b=>b.type!=='hq');
+  let pool = [];
+  if(priority==='workers'){
+    pool = [...wHQ, ...wU.filter(u=>u.type==='worker'), ...wProd, ...wSoft, ...wU];
+  } else if(priority==='buildings'){
+    pool = [...wHQ, ...wProd, ...wSoft, ...wU];
+  } else { // military
+    pool = [...wHQ, ...wU.filter(u=>u.type!=='worker'), ...wProd, ...wSoft, ...wU];
+  }
+  return pool.length ? pool : [...eBuilds.filter(b=>b.type==='hq'), ...eUnits, ...eBuilds];
+}
+
+// ─── ÉLIMINATION & VICTOIRE ───────────────────────────────────────────────────
+function checkEliminations(){
+  for(let fd of FACTION_DEFS){
+    let f=factions[fd.id]; if(f.eliminated) continue;
+    if(!buildings.find(b=>b.id===f.hqId)){
+      f.eliminated=true; f.eliminatedAt=gameTime;
+      for(let i=units.length-1;i>=0;i--) if(units[i].faction===fd.id) units.splice(i,1);
+      for(let i=buildings.length-1;i>=0;i--) if(buildings[i].faction===fd.id) buildings.splice(i,1);
+      log(`💀 ${f.name} éliminé !`,fd.id);
+    }
+  }
+}
+
+function checkWin(){
+  let alive=FACTION_DEFS.filter(fd=>!factions[fd.id].eliminated);
+  if(alive.length<=1){
+    gameRunning=false;
+    endGame(alive.length===1?alive[0].id:null);
+  }
+}
+
+// ─── APPRENTISSAGE ────────────────────────────────────────────────────────────
+function endGame(winnerId){
+  let elim=FACTION_DEFS.filter(fd=>fd.id!==winnerId).sort((a,b)=>(factions[b.id].eliminatedAt||0)-(factions[a.id].eliminatedAt||0));
+  let ranking=winnerId?[FACTION_DEFS.find(f=>f.id===winnerId),...elim]:elim;
+
+  ranking.forEach((fd,place)=>{
+    let agent=agentMemory.agents[fd.id], f=factions[fd.id], st=f.stats;
+    agent.totalGames++; if(place===0) agent.wins++;
+    agent.history.push({place:place+1,survivalTime:f.eliminatedAt||gameTime,resourcesGathered:st.resourcesGathered,killCount:st.killCount,lossCount:st.lossCount});
+    if(agent.history.length>10) agent.history.shift();
+    adaptParams(fd.id,agent,place);
+  });
+
+  saveMemory(agentMemory);
+  let wf=winnerId?factions[winnerId]:null;
+  let wdef=winnerId?FACTION_DEFS.find(f=>f.id===winnerId):null;
+  showOverlay(wf?wf.name+' GAGNE':'MATCH NUL', wdef?.color||'#ffd700',
+    `Génération ${agentMemory.generation} — Les agents adaptent leur stratégie pour la prochaine partie.`, ranking);
+}
+
+function adaptParams(fid,agent,place){
+  const p=agent.params, hist=agent.history;
+  if(hist.length<2) return;
+  const last=hist[hist.length-1], prev=hist[hist.length-2];
+
+  // Mort rapide → être plus défensif, attendre une armée plus grande
+  if(last.survivalTime<60*2&&place>=2){
+    p.assaultThreshold=Math.min(16,p.assaultThreshold+2);
+    p.defenseRadius=Math.min(350,p.defenseRadius+25);
+    p.attackInterval=Math.min(28,p.attackInterval+3);
+  }
+
+  // Survie longue mais défaite → être plus agressif
+  if(last.survivalTime>60*4&&place>=2&&last.killCount<4){
+    p.assaultThreshold=Math.max(4,p.assaultThreshold-1);
+    p.attackInterval=Math.max(8,p.attackInterval-2);
+    p.harassEarly=true;
+  }
+
+  // Victoire → renforcer légèrement la stratégie actuelle
+  if(place===0){
+    p.defenseRadius=Math.min(350,p.defenseRadius+10);
+  }
+
+  // Adapter la priorité de cible si résultats médiocres 2 parties consécutives
+  if(hist.length>=3){
+    let last2=hist.slice(-2).every(h=>h.place>2);
+    if(last2){
+      const prios=['military','workers','buildings'];
+      p.targetPriority=prios[(prios.indexOf(p.targetPriority)+1)%3];
+      log(`${factions[fid]?.name||fid} apprend — nouvelle priorité: ${p.targetPriority}`,'neutral');
+    }
+    let earlyKills=hist.slice(-3).reduce((s,h)=>s+h.killCount,0);
+    p.harassEarly=earlyKills>8;
+  }
+
+  // Expansion si économie forte mais mauvais résultat
+  if(last.resourcesGathered>3000&&place>=2) p.expansionDrive=Math.min(1,p.expansionDrive+0.1);
+
+  // Clamp
+  p.assaultThreshold=Math.max(3,Math.min(20,p.assaultThreshold));
+  p.attackInterval=Math.max(6,Math.min(30,p.attackInterval));
+  p.defenseRadius=Math.max(100,Math.min(400,p.defenseRadius));
+  p.expansionDrive=Math.max(0,Math.min(1,p.expansionDrive));
+}
+
+// ─── RENDER ───────────────────────────────────────────────────────────────────
+function render(){
+  ctx.fillStyle='#050a0f'; ctx.fillRect(0,0,W,H);
+  drawMap(); drawResources(); drawBuildings(); drawUnits(); drawParticles();
+  if(fogFaction) drawFog(fogFaction);
+}
+
+// ─── BROUILLARD DE GUERRE ─────────────────────────────────────────────────────
+function drawFog(fid){
+  // Calcule les zones visibles (unités + bâtiments de la faction observée)
+  const VISION_UNIT     = { worker:90, soldier:130, tank:160 };
+  const VISION_BUILDING = { hq:160, depot:100, barracks:110, factory:110, starport:110 };
+
+  // Collecte les cercles de vision
+  let circles = [];
+  for(let u of units){
+    if(u.faction!==fid) continue;
+    circles.push({x:u.x, y:u.y, r: VISION_UNIT[u.type]||100});
+  }
+  for(let b of buildings){
+    if(b.faction!==fid || b.buildProgress<1) continue;
+    circles.push({x:b.x, y:b.y, r: VISION_BUILDING[b.type]||100});
+  }
+
+  // Dessine le brouillard dense sur tout le canvas
+  // puis "perce" les zones visibles via destination-out
+  const offscreen = document.createElement('canvas');
+  offscreen.width = W; offscreen.height = H;
+  const oc = offscreen.getContext('2d');
+
+  // Fond brouillard
+  oc.fillStyle = 'rgba(5,10,15,0.92)';
+  oc.fillRect(0,0,W,H);
+
+  // Percer les zones de vision
+  oc.globalCompositeOperation = 'destination-out';
+  for(let c of circles){
+    let grd = oc.createRadialGradient(c.x,c.y,c.r*0.35, c.x,c.y,c.r);
+    grd.addColorStop(0,'rgba(0,0,0,1)');
+    grd.addColorStop(0.7,'rgba(0,0,0,0.85)');
+    grd.addColorStop(1,'rgba(0,0,0,0)');
+    oc.fillStyle = grd;
+    oc.beginPath(); oc.arc(c.x,c.y,c.r,0,Math.PI*2); oc.fill();
+  }
+
+  // Plaquer le brouillard sur le canvas principal
+  ctx.drawImage(offscreen,0,0);
+
+  // Label faction observée
+  let fd=FACTION_DEFS.find(f=>f.id===fid);
+  if(fd){
+    ctx.save();
+    ctx.font='bold 13px Orbitron'; ctx.textAlign='left'; ctx.textBaseline='top';
+    ctx.fillStyle=fd.color; ctx.globalAlpha=0.6;
+    ctx.fillText('👁 VISION: '+fd.name, 8, H-18);
+    ctx.restore();
+  }
+}
+
+function drawMap(){
+  for(let y=0;y<ROWS;y++) for(let x=0;x<COLS;x++){
+    if(!map[y]) continue;
+    if(map[y][x]===1){ctx.fillStyle='#0c1a24';ctx.fillRect(x*TILE,y*TILE,TILE,TILE);}
+    else if((x+y)%2===0){ctx.fillStyle='rgba(0,40,60,0.025)';ctx.fillRect(x*TILE,y*TILE,TILE,TILE);}
+  }
+  ctx.strokeStyle='rgba(100,150,200,0.04)'; ctx.lineWidth=1; ctx.setLineDash([4,10]);
+  ctx.beginPath();ctx.moveTo(W/2,0);ctx.lineTo(W/2,H);ctx.stroke();
+  ctx.beginPath();ctx.moveTo(0,H/2);ctx.lineTo(W,H/2);ctx.stroke();
+  ctx.setLineDash([]);
+}
+
+function drawResources(){
+  for(let r of resources){
+    if(r.amount<=0) continue;
+    let ratio=r.amount/r.maxAmount, size=5+ratio*6;
+    let isVesp = r.type==='vespene';
+    let col = isVesp ? '#00ff88' : '#ffd700';
+    let colDim = isVesp ? 'rgba(0,255,136,' : 'rgba(255,215,0,';
+    ctx.save(); ctx.translate(r.x,r.y);
+    let grd=ctx.createRadialGradient(0,0,0,0,0,size*2.5);
+    grd.addColorStop(0,`${colDim}${0.18*ratio})`); grd.addColorStop(1,'transparent');
+    ctx.fillStyle=grd; ctx.beginPath(); ctx.arc(0,0,size*2.5,0,Math.PI*2); ctx.fill();
+    let mg=r.workerCount>0?0.4+0.4*Math.sin(gameTime*8):0;
+    ctx.rotate(Math.PI/4);
+    ctx.fillStyle=`${colDim}${0.5+ratio*0.5})`;
+    ctx.strokeStyle=`${colDim}${0.5+mg*0.5})`;
+    ctx.lineWidth=1+mg; ctx.shadowBlur=4+mg*8; ctx.shadowColor=col;
+    ctx.fillRect(-size/2,-size/2,size,size); ctx.strokeRect(-size/2,-size/2,size,size);
+    ctx.restore();
+    let bw=18;
+    ctx.fillStyle='#001a0a'; ctx.fillRect(r.x-bw/2,r.y+9,bw,2);
+    ctx.fillStyle=`${colDim}${0.6+ratio*0.4})`; ctx.fillRect(r.x-bw/2,r.y+9,bw*ratio,2);
+  }
+}
+
+function drawBuildings(){
+  for(let b of buildings){
+    ctx.save(); ctx.translate(b.x,b.y);
+    let fd=FACTION_DEFS.find(f=>f.id===b.faction);
+    let bright=fd?.color||'#fff', dim=fd?.dim||'#222', s=b.size;
+    if(b.type==='hq'){
+      ctx.shadowBlur=16; ctx.shadowColor=bright;
+      ctx.strokeStyle=bright; ctx.lineWidth=2; ctx.fillStyle=dim;
+      drawHex(0,0,s/2); ctx.fill(); ctx.stroke(); ctx.shadowBlur=0;
+      ctx.fillStyle=bright; ctx.font='bold 11px Orbitron';
+      ctx.textAlign='center'; ctx.textBaseline='middle'; ctx.fillText('HQ',0,0);
+    } else if(b.type==='depot'){
+      ctx.shadowBlur=8; ctx.shadowColor=bright;
+      ctx.strokeStyle=bright; ctx.lineWidth=1.5; ctx.fillStyle=dim;
+      drawHex(0,0,s/2); ctx.fill(); ctx.stroke(); ctx.shadowBlur=0;
+      ctx.fillStyle=bright; ctx.font='bold 9px Orbitron';
+      ctx.textAlign='center'; ctx.textBaseline='middle'; ctx.fillText('DEP',0,0);
+    } else {
+      ctx.globalAlpha=0.35+b.buildProgress*0.65;
+      if(b.buildProgress<1) ctx.setLineDash([3,3]);
+      ctx.fillStyle=dim; ctx.strokeStyle=bright; ctx.lineWidth=1.5;
+      ctx.fillRect(-s/2,-s/2,s,s); ctx.strokeRect(-s/2,-s/2,s,s);
+      ctx.setLineDash([]);
+      ctx.fillStyle=bright; ctx.font='10px Share Tech Mono';
+      ctx.textAlign='center'; ctx.textBaseline='middle'; ctx.fillText(b.label,0,0);
+      if(b.buildProgress<1){ctx.fillStyle='#111';ctx.fillRect(-s/2,s/2+2,s,3);ctx.fillStyle=bright;ctx.fillRect(-s/2,s/2+2,s*b.buildProgress,3);}
+    }
+    if(b.hp<b.maxHp){ctx.globalAlpha=1;let bw=s;ctx.fillStyle='#300';ctx.fillRect(-bw/2,-s/2-7,bw,3);let ratio=Math.max(0,b.hp/b.maxHp);ctx.fillStyle='#0d0';ctx.fillRect(-bw/2,-s/2-7,bw*ratio,3);}
+    ctx.restore();
+  }
+}
+
+function drawHex(cx,cy,r){
+  ctx.beginPath();
+  for(let i=0;i<6;i++){let a=(Math.PI/3)*i-Math.PI/6;i===0?ctx.moveTo(cx+r*Math.cos(a),cy+r*Math.sin(a)):ctx.lineTo(cx+r*Math.cos(a),cy+r*Math.sin(a));}
+  ctx.closePath();
+}
+
+function drawUnits(){
+  for(let u of units){
+    let fd=FACTION_DEFS.find(f=>f.id===u.faction), col=fd?.color||'#fff';
+    ctx.save(); ctx.translate(u.x,u.y); ctx.rotate(u.angle);
+    ctx.globalAlpha=u.type==='worker'?0.75: u.state==='retreat'?0.5 :1;
+    ctx.shadowBlur=u.type==='tank'?10:5; ctx.shadowColor=col; ctx.fillStyle=col;
+    if(u.type==='worker'){
+      ctx.fillRect(-u.size/2,-u.size/2,u.size,u.size);
+      if(u.carrying>0){ctx.shadowBlur=0;ctx.fillStyle='#ffd700';ctx.beginPath();ctx.arc(0,-u.size,2,0,Math.PI*2);ctx.fill();}
+    } else if(u.type==='medivac'){
+      // Corps principal elliptique
+      ctx.beginPath();
+      ctx.ellipse(0,0,u.size*1.6,u.size*0.9,0,0,Math.PI*2);
+      ctx.fill();
+      // Croix rouge de soin
+      ctx.shadowBlur=0; ctx.fillStyle='#ff2244';
+      ctx.fillRect(-1, -u.size*0.7, 2, u.size*1.4);
+      ctx.fillRect(-u.size*0.7, -1, u.size*1.4, 2);
+      // Halo vert si cargo
+      if(u.cargo&&u.cargo.length>0){
+        ctx.strokeStyle='#00ff88'; ctx.lineWidth=1.5; ctx.globalAlpha=0.6;
+        ctx.beginPath(); ctx.ellipse(0,0,u.size*2,u.size*1.5,0,0,Math.PI*2); ctx.stroke();
+        ctx.globalAlpha=1;
+      }
+      // Altitude : ombre au sol
+      ctx.restore(); ctx.globalAlpha=1;
+      ctx.fillStyle='rgba(0,0,0,0.18)';
+      ctx.beginPath(); ctx.ellipse(u.x, u.y+u.size*1.8, u.size*1.2, u.size*0.5, 0, 0, Math.PI*2); ctx.fill();
+      // HP bar
+      if(u.hp<u.maxHp){ctx.fillStyle='#300';ctx.fillRect(u.x-u.size,u.y-u.size-5,u.size*2,2);ctx.fillStyle='#0c0';ctx.fillRect(u.x-u.size,u.y-u.size-5,u.size*2*(u.hp/u.maxHp),2);}
+      // Barre d'énergie (bleue)
+      let ew=u.size*2, er=(u.energy||0)/UNIT_TYPES.medivac.maxEnergy;
+      ctx.fillStyle='#002244'; ctx.fillRect(u.x-u.size, u.y-u.size-9, ew, 2);
+      ctx.fillStyle= er>0.3 ? '#00aaff' : '#ff6600';
+      ctx.fillRect(u.x-u.size, u.y-u.size-9, ew*er, 2);
+      continue;
+    } else if(u.type==='marauder'){
+      // Corps trapu : hexagone aplati
+      ctx.beginPath();
+      ctx.moveTo(u.size*1.2, 0);
+      ctx.lineTo(u.size*0.6, -u.size*0.9);
+      ctx.lineTo(-u.size*0.6, -u.size*0.9);
+      ctx.lineTo(-u.size*1.2, 0);
+      ctx.lineTo(-u.size*0.6, u.size*0.9);
+      ctx.lineTo(u.size*0.6, u.size*0.9);
+      ctx.closePath(); ctx.fill();
+      // Indicateur blindage
+      ctx.shadowBlur=0; ctx.strokeStyle='rgba(255,255,255,0.4)'; ctx.lineWidth=1.5;
+      ctx.stroke();
+    } else if(u.type==='soldier'){
+      ctx.beginPath();ctx.moveTo(u.size,0);ctx.lineTo(-u.size/2,-u.size/2);ctx.lineTo(-u.size/2,u.size/2);ctx.closePath();ctx.fill();
+    } else {
+      // Tank
+      ctx.fillRect(-u.size,-u.size/1.5,u.size*2,u.size*1.3);
+      ctx.fillStyle='rgba(255,255,255,0.65)';ctx.fillRect(0,-1.5,u.size+2,3);
+
+      // Mode siège : anneau rouge + corps élargi
+      if(u.siegeMode==='siege'||u.siegeMode==='deploying'||u.siegeMode==='undeploying'){
+        ctx.shadowBlur=0;
+        let prog = u.siegeMode==='siege' ? 1 : u.siegeMode==='deploying' ? 1-(u.siegeTimer/2) : (u.siegeTimer/2);
+        ctx.globalAlpha=0.5*prog;
+        ctx.strokeStyle='#ff4400'; ctx.lineWidth=2+prog*3;
+        ctx.beginPath(); ctx.arc(0,0,UNIT_TYPES.tank.range*3,0,Math.PI*2); ctx.stroke();
+        ctx.globalAlpha=1;
+        // Corps plus large en siège
+        ctx.fillStyle=col+'aa';
+        ctx.fillRect(-u.size*1.6,-u.size*1.2,u.size*3.2,u.size*2.4);
+        // Indicateur deploying
+        if(u.siegeMode!=='siege'){
+          ctx.fillStyle='#ff4400';
+          ctx.fillRect(-u.size, u.size+2, u.size*2*prog, 3);
+        }
+      }
+    }
+    ctx.shadowBlur=0; ctx.restore(); ctx.globalAlpha=1;
+    // Indicateur éclaireur
+    if(u.state==='scout'){
+      ctx.save(); ctx.font='12px serif'; ctx.textAlign='center'; ctx.textBaseline='middle';
+      ctx.globalAlpha=0.85; ctx.fillText('👁',u.x,u.y-u.size-5); ctx.restore();
+    }
+    if(u.hp<u.maxHp){ctx.fillStyle='#300';ctx.fillRect(u.x-u.size,u.y-u.size-4,u.size*2,2);ctx.fillStyle='#0c0';ctx.fillRect(u.x-u.size,u.y-u.size-4,u.size*2*(u.hp/u.maxHp),2);}
+  }
+}
+
+function drawParticles(){
+  for(let p of particles){
+    ctx.save();ctx.globalAlpha=p.life/p.maxLife;ctx.fillStyle=p.color;ctx.shadowBlur=p.type==='bullet'?6:3;ctx.shadowColor=p.color;
+    ctx.beginPath();ctx.arc(p.x,p.y,p.type==='bullet'?p.size:p.size*(p.life/p.maxLife),0,Math.PI*2);ctx.fill();ctx.restore();
+  }
+}
+
+// ─── HUD ──────────────────────────────────────────────────────────────────────
+function buildHUD(){
+  document.getElementById('genNum').textContent=agentMemory.generation;
+  document.getElementById('factionsBar').innerHTML=FACTION_DEFS.map(fd=>{
+    let ag=agentMemory.agents[fd.id];
+    return `<div class="faction-card" id="card-${fd.id}" style="border-color:${fd.color}33;color:${fd.color}">
+      <div class="fname">${fd.name}</div>
+      <div class="fstats"><span>🏗<span id="hb-${fd.id}">0</span></span><span>⚔<span id="hu-${fd.id}">0</span></span><span>💎<span id="hr-${fd.id}">0</span></span><span style="color:#00ff88">◆<span id="hv-${fd.id}">0</span></span></div>
+      <div style="display:flex;gap:4px"><span class="phase-badge" id="hp-${fd.id}">ECO</span><span class="gen-badge">${ag.wins}W/${ag.totalGames}G</span></div>
+    </div>`;
+  }).join('');
+}
+
+function updateHUD(){
+  for(let fd of FACTION_DEFS){
+    let f=factions[fd.id]; if(!f) continue;
+    let myB=myBuildings(fd.id),myU=myUnits(fd.id);
+    document.getElementById('hb-'+fd.id).textContent=myB.length;
+    document.getElementById('hu-'+fd.id).textContent=myU.length;
+    document.getElementById('hr-'+fd.id).textContent=Math.floor(f.resources);
+    let hv=document.getElementById('hv-'+fd.id); if(hv) hv.textContent=Math.floor(f.vespene||0);
+    let ph=document.getElementById('hp-'+fd.id);
+    if(ph&&aiState[fd.id]){
+      let phase = aiState[fd.id].phase.slice(0,3).toUpperCase();
+      let ally = aiState[fd.id].allyFid ? '🤝' : '';
+      ph.textContent = ally + phase;
+    }
+    let card=document.getElementById('card-'+fd.id);
+    if(card&&f.eliminated) card.style.opacity='0.3';
+  }
+
+  let alive=FACTION_DEFS.filter(fd=>!factions[fd.id]?.eliminated);
+  let sorted=[...alive].sort((a,b)=>milPower(b.id)-milPower(a.id));
+  document.getElementById('rankPanel').innerHTML=sorted.map((fd,i)=>{
+    let f=factions[fd.id];
+    return `<div style="display:flex;justify-content:space-between;padding:2px 0;color:${fd.color};border-bottom:1px solid #152535">
+      <span>#${i+1} ${fd.name}</span><span>⚔${milPower(fd.id)} 💎${Math.floor(f.resources)} <span style="color:#00ff88">◆${Math.floor(f.vespene||0)}</span></span>
+    </div>`;
+  }).join('');
+
+  document.getElementById('learnPanel').innerHTML=FACTION_DEFS.map(fd=>{
+    let p=agentMemory.agents[fd.id].params,ag=agentMemory.agents[fd.id];
+    let winRate=ag.totalGames>0?Math.round(ag.wins/ag.totalGames*100):0;
+    return `<div style="margin-bottom:7px;padding-left:4px;border-left:2px solid ${fd.color}40">
+      <div style="color:${fd.color};font-weight:bold;margin-bottom:2px">${fd.name} — ${winRate}% WR</div>
+      <div class="learn-row"><span>Seuil assaut</span><span class="learn-val">${p.assaultThreshold}</span></div>
+      <div class="learn-row"><span>Intervalle att.</span><span class="learn-val">${Math.round(p.attackInterval)}s</span></div>
+      <div class="learn-row"><span>Cible</span><span class="learn-val">${p.targetPriority.slice(0,4)}</span></div>
+      <div class="learn-row"><span>Défense r.</span><span class="learn-val">${Math.round(p.defenseRadius)}</span></div>
+      <div class="learn-row"><span>Harcèle.</span><span class="learn-val">${p.harassEarly?'✓':'✗'}</span></div>
+    </div>`;
+  }).join('');
+}
+
+function log(msg,fid){
+  let fd=FACTION_DEFS.find(f=>f.id===fid),col=fd?fd.color:'#ffd700';
+  let m=Math.floor(gameTime/60),s=Math.floor(gameTime%60);
+  battleLog.unshift({msg,col,t:`${pad(m)}:${pad(s)}`});
+  if(battleLog.length>80) battleLog.pop();
+  document.getElementById('battleLog').innerHTML=battleLog.slice(0,30).map(e=>
+    `<div class="log-entry" style="color:${e.col}"><span style="color:#2a4a6a">[${e.t}]</span> ${e.msg}</div>`
+  ).join('');
+}
+
+function showOverlay(title,color,desc,ranking){
+  document.getElementById('winnerText').textContent=title;
+  document.getElementById('winnerText').style.color=color;
+  document.getElementById('overlayDesc').textContent=desc;
+  const medals=['🥇','🥈','🥉','💀'];
+  document.getElementById('genCards').innerHTML=(ranking||[]).map((fd,i)=>{
+    let ag=agentMemory.agents[fd.id],fd2=FACTION_DEFS.find(f=>f.id===fd.id);
+    let wr=ag.totalGames>0?Math.round(ag.wins/ag.totalGames*100):0;
+    return `<div class="gen-card" style="border-color:${fd2.color};color:${fd2.color}">
+      <div class="gname">${medals[i]||'💀'} ${fd2.name}</div>
+      <div class="gscore">${ag.wins}/${ag.totalGames}</div>
+      <div style="font-size:12px;color:#7aaabb">${wr}% win rate</div>
+      <div style="font-size:12px;margin-top:4px;color:${fd2.color}88">Cible: ${ag.params.targetPriority}<br>Seuil: ${ag.params.assaultThreshold} | Def: ${Math.round(ag.params.defenseRadius)}</div>
+    </div>`;
+  }).join('');
+  overlay.style.display='flex';
+}
+
+function setSpeed(s){
+  speed=s;
+  document.querySelectorAll('.controls .btn').forEach(b=>{ if(b.id&&b.id.startsWith('fogBtn')) return; b.classList.remove('active'); });
+  event.target.classList.add('active');
+}
+
+function setFogFaction(fid){
+  fogFaction=fid;
+  ['all','nord','est','sud','ouest'].forEach(k=>{
+    let btn=document.getElementById('fogBtn-'+k);
+    if(btn) btn.classList.toggle('active', (fid===null&&k==='all')||(fid===k));
+  });
+}
+
+// ─── STATS OVERLAY ────────────────────────────────────────────────────────────
+function toggleStats(){
+  const el = document.getElementById('statsOverlay');
+  if(el.style.display==='none'){ renderStats(); el.style.display='block'; }
+  else el.style.display='none';
+}
+
+function renderStats(){
+  const el = document.getElementById('statsContent');
+  const totalGames = agentMemory.generation;
+
+  if(totalGames === 0){
+    el.innerHTML = '<p style="text-align:center;color:#2a4a6a;margin-top:40px">Aucune partie jouée pour le moment.</p>';
+    return;
+  }
+
+  // ── Cartes résumé par faction ──
+  let cardsHtml = '<div style="display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin-bottom:24px;">';
+  for(let fd of FACTION_DEFS){
+    const ag = agentMemory.agents[fd.id];
+    const wr = ag.totalGames>0 ? Math.round(ag.wins/ag.totalGames*100) : 0;
+    const p = ag.params;
+    const hist = ag.history;
+    const avgSurvival = hist.length>0 ? Math.round(hist.reduce((s,h)=>s+h.survivalTime,0)/hist.length) : 0;
+    const avgKills   = hist.length>0 ? (hist.reduce((s,h)=>s+h.killCount,0)/hist.length).toFixed(1) : 0;
+    const avgRes     = hist.length>0 ? Math.round(hist.reduce((s,h)=>s+h.resourcesGathered,0)/hist.length) : 0;
+
+    // Style de jeu
+    let style = '';
+    if(p.harassEarly && p.assaultThreshold<=6) style = '⚡ Rusheur';
+    else if(p.assaultThreshold>=12) style = '🛡 Défensif';
+    else if(p.targetPriority==='workers') style = '🔪 Harasseur';
+    else if(p.expansionDrive>0.6) style = '🏗 Expansionniste';
+    else if(p.attackInterval<=10) style = '⚔ Agressif';
+    else style = '⚖ Équilibré';
+
+    cardsHtml += `
+    <div style="border:1px solid ${fd.color}33;border-radius:4px;padding:14px;background:rgba(8,15,24,0.8);">
+      <div style="font-family:'Orbitron',sans-serif;font-size:13px;font-weight:900;color:${fd.color};margin-bottom:10px;letter-spacing:2px;">${fd.name}</div>
+      <div style="font-size:22px;font-weight:bold;color:#ffd700;margin-bottom:2px;">${wr}%</div>
+      <div style="font-size:12px;color:#2a4a6a;margin-bottom:10px;">${ag.wins}V / ${ag.totalGames}P</div>
+      <div style="font-size:10px;color:${fd.color};margin-bottom:8px;padding:3px 6px;border:1px solid ${fd.color}44;border-radius:2px;display:inline-block">${style}</div>
+      <div style="font-size:12px;color:#7aaabb;line-height:1.9;margin-top:6px;">
+        <div style="display:flex;justify-content:space-between"><span>Seuil assaut</span><span style="color:${fd.color}">${p.assaultThreshold}</span></div>
+        <div style="display:flex;justify-content:space-between"><span>Intervalle att.</span><span style="color:${fd.color}">${Math.round(p.attackInterval)}s</span></div>
+        <div style="display:flex;justify-content:space-between"><span>Rayon défense</span><span style="color:${fd.color}">${Math.round(p.defenseRadius)}</span></div>
+        <div style="display:flex;justify-content:space-between"><span>Expansion</span><span style="color:${fd.color}">${Math.round(p.expansionDrive*100)}%</span></div>
+        <div style="display:flex;justify-content:space-between"><span>Cible priorité</span><span style="color:${fd.color}">${p.targetPriority}</span></div>
+        <div style="display:flex;justify-content:space-between"><span>Harcèlement</span><span style="color:${fd.color}">${p.harassEarly?'✓':'✗'}</span></div>
+        <div style="border-top:1px solid #152535;margin:6px 0"></div>
+        <div style="display:flex;justify-content:space-between"><span>Survie moy.</span><span style="color:#ffd700">${Math.floor(avgSurvival/60)}m${Math.floor(avgSurvival%60)}s</span></div>
+        <div style="display:flex;justify-content:space-between"><span>Kills moy.</span><span style="color:#ffd700">${avgKills}</span></div>
+        <div style="display:flex;justify-content:space-between"><span>Res. moy.</span><span style="color:#ffd700">${avgRes}</span></div>
+      </div>
+    </div>`;
+  }
+  cardsHtml += '</div>';
+
+  // ── Graphiques canvas ──
+  const chartW = 900, chartH = 200;
+  let chartsHtml = `
+  <div style="margin-bottom:8px;font-family:'Orbitron',sans-serif;font-size:10px;color:#00d4ff;letter-spacing:2px;">PROGRESSION WIN RATE (${totalGames} parties)</div>
+  <canvas id="chartWinrate" width="${chartW}" height="${chartH}" style="width:100%;max-width:${chartW}px;display:block;margin-bottom:20px;border:1px solid #152535;border-radius:3px;"></canvas>
+  <div style="margin-bottom:8px;font-family:'Orbitron',sans-serif;font-size:10px;color:#00d4ff;letter-spacing:2px;">PLACE FINALE (historique récent)</div>
+  <canvas id="chartPlace" width="${chartW}" height="${chartH}" style="width:100%;max-width:${chartW}px;display:block;margin-bottom:20px;border:1px solid #152535;border-radius:3px;"></canvas>
+  <div style="margin-bottom:8px;font-family:'Orbitron',sans-serif;font-size:10px;color:#00d4ff;letter-spacing:2px;">KILLS (historique récent)</div>
+  <canvas id="chartKills" width="${chartW}" height="${chartH}" style="width:100%;max-width:${chartW}px;display:block;margin-bottom:8px;border:1px solid #152535;border-radius:3px;"></canvas>`;
+
+  el.innerHTML = cardsHtml + chartsHtml;
+
+  // Dessiner les graphiques après injection dans le DOM
+  requestAnimationFrame(()=>{
+    drawWinrateChart();
+    drawPlaceChart();
+    drawKillsChart();
+  });
+}
+
+function drawChartBase(canvasId, title){
+  const c = document.getElementById(canvasId);
+  if(!c) return null;
+  const cx = c.getContext('2d');
+  const W = c.width, H = c.height;
+  const PAD = {top:15, right:20, bottom:30, left:40};
+  cx.fillStyle = '#050a0f';
+  cx.fillRect(0,0,W,H);
+  // Grille
+  cx.strokeStyle = '#152535'; cx.lineWidth=1; cx.setLineDash([3,6]);
+  for(let i=1;i<5;i++){
+    let y=PAD.top+(H-PAD.top-PAD.bottom)*i/4;
+    cx.beginPath(); cx.moveTo(PAD.left,y); cx.lineTo(W-PAD.right,y); cx.stroke();
+  }
+  cx.setLineDash([]);
+  return {cx, W, H, PAD, iW:W-PAD.left-PAD.right, iH:H-PAD.top-PAD.bottom};
+}
+
+function drawWinrateChart(){
+  const b = drawChartBase('chartWinrate');
+  if(!b) return;
+  const {cx,W,H,PAD,iW,iH} = b;
+  // Reconstituer l'évolution du winrate partie par partie depuis l'historique
+  // On utilise l'historique (max 10) de chaque agent + wins/totalGames pour la valeur finale
+  for(let fd of FACTION_DEFS){
+    const ag = agentMemory.agents[fd.id];
+    if(ag.totalGames===0) continue;
+    const hist = ag.history;
+    if(hist.length<2) continue;
+
+    // Reconstituer les winrates cumulés
+    let points = [];
+    // On remonte depuis la fin : on sait que wins/totalGames est l'état final
+    // On recalcule à rebours sur l'historique disponible
+    let w = ag.wins, t = ag.totalGames;
+    let reversed = [];
+    for(let i=hist.length-1;i>=0;i--){
+      reversed.push(w/t*100);
+      if(hist[i].place===1) w--;
+      t--;
+    }
+    points = reversed.reverse();
+
+    cx.strokeStyle = fd.color; cx.lineWidth = 2;
+    cx.shadowBlur = 4; cx.shadowColor = fd.color;
+    cx.beginPath();
+    points.forEach((v,i)=>{
+      let x = PAD.left + iW*(i/(points.length-1||1));
+      let y = PAD.top + iH*(1-Math.min(v,100)/100);
+      i===0 ? cx.moveTo(x,y) : cx.lineTo(x,y);
+    });
+    cx.stroke(); cx.shadowBlur=0;
+
+    // Point final
+    let lx = PAD.left + iW, ly = PAD.top + iH*(1-Math.min(ag.wins/ag.totalGames*100,100)/100);
+    cx.fillStyle=fd.color; cx.beginPath(); cx.arc(lx,ly,3,0,Math.PI*2); cx.fill();
+    cx.font='11px Share Tech Mono'; cx.fillStyle=fd.color; cx.textAlign='right';
+    cx.fillText(`${fd.name} ${Math.round(ag.wins/ag.totalGames*100)}%`, lx-5, ly-5);
+  }
+  // Axe Y
+  cx.fillStyle='#2a4a6a'; cx.font='11px Share Tech Mono'; cx.textAlign='right';
+  [0,25,50,75,100].forEach(v=>{
+    let y=PAD.top+iH*(1-v/100);
+    cx.fillText(v+'%', PAD.left-4, y+3);
+  });
+}
+
+function drawPlaceChart(){
+  const b = drawChartBase('chartPlace');
+  if(!b) return;
+  const {cx,W,H,PAD,iW,iH} = b;
+  for(let fd of FACTION_DEFS){
+    const hist = agentMemory.agents[fd.id].history;
+    if(hist.length<2) continue;
+    cx.strokeStyle=fd.color; cx.lineWidth=2;
+    cx.shadowBlur=4; cx.shadowColor=fd.color;
+    cx.beginPath();
+    hist.forEach((h,i)=>{
+      let x=PAD.left+iW*(i/(hist.length-1||1));
+      let y=PAD.top+iH*((h.place-1)/3); // place 1-4 → 0-1
+      i===0?cx.moveTo(x,y):cx.lineTo(x,y);
+    });
+    cx.stroke(); cx.shadowBlur=0;
+    // Dernier point
+    let lh=hist[hist.length-1];
+    let lx=PAD.left+iW, ly=PAD.top+iH*((lh.place-1)/3);
+    cx.fillStyle=fd.color; cx.beginPath(); cx.arc(lx,ly,3,0,Math.PI*2); cx.fill();
+  }
+  // Axe Y labels places
+  cx.fillStyle='#2a4a6a'; cx.font='11px Share Tech Mono'; cx.textAlign='right';
+  ['1er','2e','3e','4e'].forEach((v,i)=>{
+    let y=PAD.top+iH*(i/3);
+    cx.fillText(v, PAD.left-4, y+3);
+  });
+}
+
+function drawKillsChart(){
+  const b = drawChartBase('chartKills');
+  if(!b) return;
+  const {cx,W,H,PAD,iW,iH} = b;
+  // Max kills pour normaliser
+  let maxK=1;
+  for(let fd of FACTION_DEFS){
+    agentMemory.agents[fd.id].history.forEach(h=>{ if(h.killCount>maxK) maxK=h.killCount; });
+  }
+  for(let fd of FACTION_DEFS){
+    const hist = agentMemory.agents[fd.id].history;
+    if(hist.length<2) continue;
+    cx.strokeStyle=fd.color; cx.lineWidth=2;
+    cx.shadowBlur=4; cx.shadowColor=fd.color;
+    cx.beginPath();
+    hist.forEach((h,i)=>{
+      let x=PAD.left+iW*(i/(hist.length-1||1));
+      let y=PAD.top+iH*(1-h.killCount/maxK);
+      i===0?cx.moveTo(x,y):cx.lineTo(x,y);
+    });
+    cx.stroke(); cx.shadowBlur=0;
+  }
+  cx.fillStyle='#2a4a6a'; cx.font='11px Share Tech Mono'; cx.textAlign='right';
+  [0,Math.round(maxK/2),maxK].forEach(v=>{
+    let y=PAD.top+iH*(1-v/maxK);
+    cx.fillText(v, PAD.left-4, y+3);
+  });
+  // Légende
+  let lx=PAD.left+10;
+  for(let fd of FACTION_DEFS){
+    cx.fillStyle=fd.color; cx.fillRect(lx,H-PAD.bottom+8,10,6);
+    cx.font='11px Share Tech Mono'; cx.textAlign='left'; cx.fillText(fd.name, lx+13, H-PAD.bottom+14);
+    lx+=70;
+  }
+}
+
+// ─── SIMULATION HEADLESS ─────────────────────────────────────────────────────
+function startSimulation(totalGames){
+  if(gameRunning){ gameRunning=false; if(animFrame) cancelAnimationFrame(animFrame); }
+  overlay.style.display='none';
+  const simOvl=document.getElementById('simOverlay');
+  simOvl.style.display='flex';
+  document.getElementById('simBtn').disabled=true;
+
+  let gamesLeft=totalGames, gamesPlayed=0;
+  const simLog=document.getElementById('simLog');
+  let logLines=[];
+
+  function simLog2(msg){ logLines.unshift(msg); if(logLines.length>4) logLines.pop(); simLog.innerHTML=logLines.join('<br>'); }
+
+  function simOneGame(){
+    // ── Init headless ──
+    W=1200; H=700; COLS=Math.floor(W/20); ROWS=Math.floor(H/20);
+    gameTime=0; uid=0;
+    buildings=[]; units=[]; particles=[]; resources=[]; factions={}; aiState={};
+    generateMap(); spawnResources(); initExploreGrid();
+    agentMemory.generation++;
+
+    const hqPos=[
+      {x:W*0.08,y:H*0.10},{x:W*0.92,y:H*0.10},
+      {x:W*0.92,y:H*0.90},{x:W*0.08,y:H*0.90},
+    ];
+    FACTION_DEFS.forEach((fd,i)=>{
+      let hq=makeBuilding(fd.id,'hq',hqPos[i].x,hqPos[i].y);
+      buildings.push(hq);
+      factions[fd.id]={resources:200,vespene:0,hqId:hq.id,color:fd.color,dim:fd.dim,name:fd.name,eliminated:false,eliminatedAt:null,knownEnemyBuildings:new Set(),stats:{resourcesGathered:0,killCount:0,lossCount:0}};
+      for(let w=0;w<6;w++) units.push(makeUnit(fd.id,'worker',hq.x+(Math.random()-0.5)*50,hq.y+(Math.random()-0.5)*50));
+      const p=agentMemory.agents[fd.id].params;
+      aiState[fd.id]={phase:'economy',buildTimer:2+Math.random()*3,attackTimer:p.attackInterval*(0.8+Math.random()*0.4),params:JSON.parse(JSON.stringify(p))};
+    });
+
+    // ── Boucle de simulation (pas de rendu) ──
+    const DT=0.05; // 50ms par step — assez précis, assez rapide
+    const MAX_TIME=600; // 10 min max par partie
+    let t=0;
+    while(t<MAX_TIME){
+      t+=DT; gameTime=t;
+      // Update sans particules (inutiles en headless)
+      updateGameHeadless(DT);
+      // Vérif fin de partie
+      let alive=FACTION_DEFS.filter(fd=>!factions[fd.id].eliminated);
+      if(alive.length<=1){
+        simEndGame(alive.length===1?alive[0].id:null, simLog2);
+        return;
+      }
+    }
+    // Timeout — victoire au plus fort
+    let alive=FACTION_DEFS.filter(fd=>!factions[fd.id].eliminated);
+    let winner=alive.sort((a,b)=>milPower(b.id)-milPower(a.id))[0];
+    simEndGame(winner?.id||null, simLog2);
+  }
+
+  function simEndGame(winnerId, logger){
+    let elim=FACTION_DEFS.filter(fd=>fd.id!==winnerId).sort((a,b)=>(factions[b.id].eliminatedAt||0)-(factions[a.id].eliminatedAt||0));
+    let ranking=winnerId?[FACTION_DEFS.find(f=>f.id===winnerId),...elim]:elim;
+    ranking.forEach((fd,place)=>{
+      let agent=agentMemory.agents[fd.id], f=factions[fd.id], st=f.stats;
+      agent.totalGames++; if(place===0) agent.wins++;
+      agent.history.push({place:place+1,survivalTime:f.eliminatedAt||gameTime,resourcesGathered:st.resourcesGathered,killCount:st.killCount,lossCount:st.lossCount});
+      if(agent.history.length>10) agent.history.shift();
+      adaptParams(fd.id,agent,place);
+    });
+    if(winnerId){
+      let wname=factions[winnerId]?.name||winnerId;
+      logger(`Gen ${agentMemory.generation} — Victoire ${wname} (${Math.floor(gameTime/60)}m${Math.floor(gameTime%60)}s)`);
+    }
+  }
+
+  // ── Scheduler : batch de parties par setTimeout pour ne pas geler l'UI ──
+  function runBatch(){
+    const BATCH=5; // parties par batch
+    for(let i=0;i<BATCH&&gamesLeft>0;i++){
+      simOneGame();
+      gamesLeft--; gamesPlayed++;
+    }
+    // Mise à jour UI
+    const pct=Math.round(gamesPlayed/totalGames*100);
+    document.getElementById('simBar').style.width=pct+'%';
+    document.getElementById('simStatus').textContent=`Partie ${gamesPlayed} / ${totalGames} — Génération ${agentMemory.generation}`;
+
+    if(gamesLeft>0){
+      setTimeout(runBatch, 0);
+    } else {
+      // Fin de simulation
+      saveMemory(agentMemory);
+      document.getElementById('simOverlay').style.display='none';
+      document.getElementById('simBtn').disabled=false;
+      document.getElementById('genNum').textContent=agentMemory.generation;
+      buildHUD();
+      // Afficher résultats
+      let sorted=[...FACTION_DEFS].sort((a,b)=>agentMemory.agents[b.id].wins-agentMemory.agents[a.id].wins);
+      showOverlay(
+        `${agentMemory.agents[sorted[0].id].wins} VICTOIRES`,
+        sorted[0].color,
+        `Simulation de ${totalGames} parties terminée — Génération ${agentMemory.generation}. Les agents ont adapté leurs stratégies.`,
+        sorted
+      );
+    }
+  }
+
+  setTimeout(runBatch, 50);
+}
+
+// Version headless de updateGame (sans particules ni log DOM)
+function updateGameHeadless(dt){
+  for(let b of buildings){
+    if(b.buildProgress<1) continue;
+    const f=factions[b.faction]; if(!f||f.eliminated) continue;
+    if(b.attack>0){
+      b.attackCooldown-=dt;
+      if(b.attackCooldown<=0){
+        let en=activeEnemyUnits(b.faction);
+        let t=findClosestInRange(en,b.x,b.y,b.range);
+        if(t){damageEntity(t,b.attack);b.attackCooldown=1.4;}
+      }
+    }
+    if(b.type==='hq'||b.type==='depot'){
+      b.spawnTimer-=dt;
+      if(b.spawnTimer<=0){
+        if(b.type==='hq'){
+          let w=myUnits(b.faction).filter(u=>u.type==='worker').length;
+          if(w<10&&f.resources>=50){f.resources-=50;units.push(makeUnit(b.faction,'worker',b.x+(Math.random()-0.5)*40,b.y+(Math.random()-0.5)*40));b.spawnTimer=20;}
+          else b.spawnTimer=4;
+        } else b.spawnTimer=999;
+      }
+    }
+    if(b.type==='barracks'){
+      b.spawnTimer-=dt;
+      if(b.spawnTimer<=0){
+        let infantry=myUnits(b.faction).filter(u=>u.type==='soldier'||u.type==='marauder');
+        if(infantry.length<18){
+          let marauders=infantry.filter(u=>u.type==='marauder').length;
+          let soldiers2=infantry.filter(u=>u.type==='soldier').length;
+          let spawnType=(soldiers2>=marauders*2)?'marauder':'soldier';
+          let cost=spawnType==='marauder'?75:50;
+          if(f.resources>=cost){f.resources-=cost;units.push(makeUnit(b.faction,spawnType,b.x+(Math.random()-0.5)*30,b.y+(Math.random()-0.5)*30));b.spawnTimer=spawnType==='marauder'?13:10;}
+          else b.spawnTimer=4;
+        } else b.spawnTimer=4;
+      }
+    }
+    if(b.type==='factory'){
+      b.spawnTimer-=dt;
+      if(b.spawnTimer<=0){
+        let t=myUnits(b.faction).filter(u=>u.type==='tank').length;
+        if(t<6&&f.resources>=150&&f.vespene>=100){f.resources-=150;f.vespene-=100;units.push(makeUnit(b.faction,'tank',b.x+(Math.random()-0.5)*30,b.y+(Math.random()-0.5)*30));b.spawnTimer=22;}
+        else b.spawnTimer=4;
+      }
+    }
+    if(b.type==='starport'){
+      b.spawnTimer-=dt;
+      if(b.spawnTimer<=0){
+        let mv=myUnits(b.faction).filter(u=>u.type==='medivac').length;
+        if(mv<3&&f.resources>=100&&f.vespene>=100){f.resources-=100;f.vespene-=100;units.push(makeUnit(b.faction,'medivac',b.x+(Math.random()-0.5)*30,b.y+(Math.random()-0.5)*30));b.spawnTimer=28;}
+        else b.spawnTimer=4;
+      }
+    }
+  }
+  for(let i=units.length-1;i>=0;i--){
+    let u=units[i];
+    if(factions[u.faction]?.eliminated){units.splice(i,1);continue;}
+    u.attackCooldown=Math.max(0,u.attackCooldown-dt);
+    if(u.type==='worker'){
+      if(u.state==='idle') assignWorkerTask(u);
+      else if(u.state==='harvest') doHarvest(u,dt);
+      else if(u.state==='attack') doAttack(u,dt);
+      else if(u.state==='build') doBuild(u,dt);
+    } else if(u.type==='medivac'){
+      doMedivac(u,dt);
+    } else {
+      if(u.state==='scout') doScout(u,dt);
+      else doCombatUnit(u,dt);
+    }
+    u.x=Math.max(u.size,Math.min(W-u.size,u.x));
+    u.y=Math.max(u.size,Math.min(H-u.size,u.y));
+  }
+  for(let fd of FACTION_DEFS) if(!factions[fd.id]?.eliminated){
+    updateExploreGrid(fd.id);
+    runAI(fd.id,dt);
+  }
+  checkEliminations();
+}
+
+function forceEndGame(){
+  if(!gameRunning) return;
+  gameRunning=false;
+  // Classer les factions survivantes par puissance militaire
+  let alive=FACTION_DEFS.filter(fd=>!factions[fd.id]?.eliminated);
+  let dead=FACTION_DEFS.filter(fd=>factions[fd.id]?.eliminated).sort((a,b)=>(factions[b.id].eliminatedAt||0)-(factions[a.id].eliminatedAt||0));
+  let ranking=[...alive.sort((a,b)=>milPower(b.id)-milPower(a.id)),...dead];
+  endGame(alive.length===1 ? alive[0].id : (alive.length>0 ? alive[0].id : null));
+}
+
+window.addEventListener('resize',()=>{if(gameRunning) resize();});
+resize();
+
+// Afficher stats initiales
+if(agentMemory.generation>0){
+  document.getElementById('winnerText').textContent='AI WARS 4';
+  document.getElementById('overlayDesc').textContent=`${agentMemory.generation} parties jouées. Les agents ont adapté leurs stratégies.`;
+  document.getElementById('genCards').innerHTML=FACTION_DEFS.map(fd=>{
+    let ag=agentMemory.agents[fd.id],wr=ag.totalGames>0?Math.round(ag.wins/ag.totalGames*100):0;
+    return `<div class="gen-card" style="border-color:${fd.color};color:${fd.color}">
+      <div class="gname">${fd.name}</div><div class="gscore">${ag.wins}/${ag.totalGames}</div>
+      <div style="font-size:12px;color:#7aaabb">${wr}% win rate</div>
+      <div style="font-size:12px;margin-top:3px;color:${fd.color}88">Seuil: ${ag.params.assaultThreshold} | ${ag.params.targetPriority}</div>
+    </div>`;
+  }).join('');
+  document.getElementById('genNum').textContent=agentMemory.generation;
+}
+</script>
+</body>
+</html>
