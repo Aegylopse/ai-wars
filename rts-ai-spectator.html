@@ -53,8 +53,9 @@
     <button class="btn" id="fogBtn-ouest" onclick="setFogFaction('ouest')">OUEST</button>
     <span style="font-size:12px;color:#2a4a6a;margin-left:4px">SPEED</span>
     <button class="btn" onclick="setSpeed(0.5)">×½</button>
-    <button class="btn active" onclick="setSpeed(1)">×1</button>
+    <button class="btn" onclick="setSpeed(1)">×1</button>
     <button class="btn" onclick="setSpeed(2)">×2</button>
+    <button class="btn active" onclick="setSpeed(3)">×3</button>
     <button class="btn" onclick="setSpeed(4)">×4</button>
     <button class="btn" onclick="setSpeed(8)">×8</button>
     <button class="btn" onclick="forceEndGame()" style="margin-left:8px;border-color:#ff3a3a44;color:#ff3a3a88" onmouseover="this.style.borderColor='#ff3a3a';this.style.color='#ff3a3a'" onmouseout="this.style.borderColor='#ff3a3a44';this.style.color='#ff3a3a88'">■ FIN</button>
@@ -176,7 +177,7 @@ let W, H, COLS, ROWS;
 const TILE = 20;
 let map=[], resources=[], buildings=[], units=[], particles=[], battleLog=[];
 let factions={}, aiState={};
-let gameRunning=false, speed=1, gameTime=0, lastTime=0, uid=0;
+let gameRunning=false, speed=3, gameTime=0, lastTime=0, uid=0;
 let fogFaction=null; // null = vue globale (pas de brouillard)
 let fpsCount=0, fpsTimer=0, fpsCur=60, animFrame;
 let resourceHistory={}, lastResourceSample=0;
