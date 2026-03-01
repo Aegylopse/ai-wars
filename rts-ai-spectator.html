@@ -67,6 +67,7 @@
   <div class="sidebar">
     <div><h3>CLASSEMENT</h3><div id="rankPanel"></div></div>
     <div><h3>APPRENTISSAGE</h3><div id="learnPanel"></div></div>
+    <div><h3>RESSOURCES</h3><canvas id="resGraph" width="196" height="70" style="width:100%;display:block;border:1px solid #152535;border-radius:2px;"></canvas></div>
     <div><h3>BATTLE LOG</h3><div id="battleLog"></div></div>
   </div>
 </div>
@@ -178,10 +179,11 @@ let factions={}, aiState={};
 let gameRunning=false, speed=1, gameTime=0, lastTime=0, uid=0;
 let fogFaction=null; // null = vue globale (pas de brouillard)
 let fpsCount=0, fpsTimer=0, fpsCur=60, animFrame;
+let resourceHistory={}, lastResourceSample=0;
 
 const UNIT_TYPES = {
   worker:   {hp:40,  speed:0.6,  attack:3,  range:15, size:4},
-  soldier:  {hp:50,  speed:0.9,  attack:12, range:35, size:5},
+  marine:   {hp:50,  speed:0.9,  attack:12, range:35, size:5},
   marauder: {hp:80,  speed:0.7,  attack:20, range:38, size:6, armored:true},
   tank:     {hp:220, speed:0.45, attack:20, siegeAttack:45, range:55, size:7},
   medivac:  {hp:120, speed:1.1,  attack:0,  range:100, size:6, healRate:40, cargoMax:4, maxEnergy:100, energyDrain:20, energyRegen:10},
@@ -192,6 +194,7 @@ const BUILDING_TYPES = {
   barracks:  {hp:200, size:20, cost:150, costVespene:0,  label:'BAR'},
   factory:   {hp:250, size:22, cost:150, costVespene:75, label:'FAC'},
   starport:  {hp:200, size:22, cost:100, costVespene:100,label:'STP'},
+  turret:    {hp:150, size:16, cost:75,  costVespene:0,  label:'TUR', attack:18, range:90},
 };
 
 // ─── CANVAS & MAP ─────────────────────────────────────────────────────────────
@@ -235,11 +238,15 @@ function makeUnit(fid,type,x,y) {
   return {id:uid++,faction:fid,type,x,y,tx:x,ty:y,hp:t.hp,maxHp:t.hp,speed:t.speed,attack:t.attack,range:t.range,size:t.size,attackCooldown:0,state:'idle',target:null,resourceTarget:null,buildTarget:null,carrying:0,carryingVespene:0,angle:0,harvestPhase:'goToRes',killCount:0,
     // Médivac uniquement
     cargo:[],healCooldown:0,medState:'heal',dropTarget:null,
-    energy: type==='medivac' ? UNIT_TYPES.medivac.maxEnergy : undefined};
+    energy: type==='medivac' ? UNIT_TYPES.medivac.maxEnergy : undefined,
+    // Stimulant
+    stimActive: false, stimTimer: 0};
 }
 function makeBuilding(fid,type,x,y) {
   const t=BUILDING_TYPES[type];
-  return {id:uid++,faction:fid,type,x,y,hp:type==='hq'?t.hp:1,maxHp:t.hp,size:t.size,buildProgress:type==='hq'?1:0,spawnTimer:0,attack:t.attack||0,range:t.range||0,attackCooldown:0,label:t.label};
+  let b={id:uid++,faction:fid,type,x,y,hp:type==='hq'?t.hp:1,maxHp:t.hp,size:t.size,buildProgress:type==='hq'?1:0,spawnTimer:0,attack:t.attack||0,range:t.range||0,attackCooldown:0,label:t.label};
+  if(type==='barracks'){b.module=null;b.modulePending=null;b.moduleBuildTimer=0;}
+  return b;
 }
 
 // ─── START ────────────────────────────────────────────────────────────────────
@@ -247,6 +254,7 @@ function startGame() {
   overlay.style.display='none';
   gameRunning=true; gameTime=0; uid=0;
   battleLog=[]; document.getElementById('battleLog').innerHTML='';
+  resourceHistory={}; lastResourceSample=0; FACTION_DEFS.forEach(fd=>resourceHistory[fd.id]=[]);
   buildings=[]; units=[]; particles=[]; resources=[]; factions={}; aiState={};
   resize(); generateMap(); spawnResources(); initExploreGrid();
   agentMemory.generation++;
@@ -259,7 +267,7 @@ function startGame() {
   FACTION_DEFS.forEach((fd,i)=>{
     let hq=makeBuilding(fd.id,'hq',hqPos[i].x,hqPos[i].y);
     buildings.push(hq);
-    factions[fd.id]={resources:200,vespene:0,hqId:hq.id,color:fd.color,dim:fd.dim,name:fd.name,eliminated:false,eliminatedAt:null,knownEnemyBuildings:new Set(),stats:{resourcesGathered:0,killCount:0,lossCount:0}};
+    factions[fd.id]={resources:200,vespene:0,hqId:hq.id,color:fd.color,dim:fd.dim,name:fd.name,eliminated:false,eliminatedAt:null,knownEnemyBuildings:new Set(),stats:{resourcesGathered:0,killCount:0,lossCount:0},stimResearched:false,stimResearching:false,stimResearchTimer:0};
     for(let w=0;w<6;w++) units.push(makeUnit(fd.id,'worker',hq.x+(Math.random()-0.5)*50,hq.y+(Math.random()-0.5)*50));
     const p=agentMemory.agents[fd.id].params;
     aiState[fd.id]={phase:'economy',buildTimer:2+Math.random()*3,attackTimer:p.attackInterval*(0.8+Math.random()*0.4),params:JSON.parse(JSON.stringify(p))};
@@ -286,6 +294,16 @@ function loop(ts) {
   const stepDt=totalDt/steps;
   for(let i=0;i<steps;i++){gameTime+=stepDt;updateGame(stepDt);}
   updateTimer(); render(); updateHUD();
+  if(gameRunning&&gameTime-lastResourceSample>5){
+    lastResourceSample=gameTime;
+    FACTION_DEFS.forEach(fd=>{
+      if(!factions[fd.id]?.eliminated){
+        let h=resourceHistory[fd.id]||[]; h.push({t:gameTime,m:factions[fd.id].resources,v:factions[fd.id].vespene||0});
+        if(h.length>50) h.shift(); resourceHistory[fd.id]=h;
+      }
+    });
+    updateResourceGraph();
+  }
 }
 function updateTimer(){let m=Math.floor(gameTime/60),s=Math.floor(gameTime%60);document.getElementById('timerEl').textContent=pad(m)+':'+pad(s);}
 function pad(n){return String(n).padStart(2,'0');}
@@ -315,16 +333,32 @@ function updateGame(dt) {
       }
     }
     if(b.type==='barracks'){
+      // ── Build module ──
+      if(b.modulePending&&!b.module){
+        b.moduleBuildTimer-=dt;
+        if(b.moduleBuildTimer<=0){b.module=b.modulePending;b.modulePending=null;log(`${factions[b.faction]?.name} — ${b.module==='techlab'?'Centre Technique':'Réacteur'} opérationnel`,b.faction);}
+      }
+      // ── Stim research (techlab requis) ──
+      if(b.module==='techlab'&&f.stimResearching&&!f.stimResearched){
+        f.stimResearchTimer-=dt;
+        if(f.stimResearchTimer<=0){f.stimResearched=true;f.stimResearching=false;log(`${f.name} — ⚡ STIMULANT actif ! (+50% marines+marauders)`,b.faction);}
+      }
+      // ── Spawn ──
       b.spawnTimer-=dt;
       if(b.spawnTimer<=0){
-        let infantry=myUnits(b.faction).filter(u=>u.type==='soldier'||u.type==='marauder');
+        let infantry=myUnits(b.faction).filter(u=>u.type==='marine'||u.type==='marauder');
         if(infantry.length<18){
+          let canMarauder=b.module==='techlab';
           let marauders=infantry.filter(u=>u.type==='marauder').length;
-          let soldiers2=infantry.filter(u=>u.type==='soldier').length;
-          let spawnType=(soldiers2>=marauders*2)?'marauder':'soldier';
-          let cost=spawnType==='marauder'?75:50;
-          if(f.resources>=cost){f.resources-=cost;units.push(makeUnit(b.faction,spawnType,b.x+(Math.random()-0.5)*30,b.y+(Math.random()-0.5)*30));b.spawnTimer=spawnType==='marauder'?13:10;}
-          else b.spawnTimer=4;
+          let marines2=infantry.filter(u=>u.type==='marine').length;
+          let spawnType=(canMarauder&&marines2>=marauders*2)?'marauder':'marine';
+          let count=(spawnType==='marine'&&b.module==='reactor')?2:1;
+          let cost=spawnType==='marauder'?75:50*count, costVesp=spawnType==='marauder'?25:0;
+          if(f.resources>=cost&&f.vespene>=costVesp){
+            f.resources-=cost;f.vespene-=costVesp;
+            for(let i=0;i<count;i++) units.push(makeUnit(b.faction,spawnType,b.x+(Math.random()-0.5)*30,b.y+(Math.random()-0.5)*30));
+            b.spawnTimer=spawnType==='marauder'?13:10;
+          } else b.spawnTimer=4;
         } else b.spawnTimer=4;
       }
     }
@@ -392,7 +426,7 @@ function activeEnemyUnits(fid){return units.filter(v=>v.faction!==fid&&!factions
 function activeEnemyBuildings(fid){return buildings.filter(b=>b.faction!==fid&&b.buildProgress>=1&&!factions[b.faction]?.eliminated);}
 
 // ─── SYSTÈME DE VISION IA ─────────────────────────────────────────────────────
-const VISION_RADIUS = { worker:90, soldier:130, tank:160, hq:160, depot:100, barracks:110, factory:110, starport:110, medivac:140 };
+const VISION_RADIUS = { worker:90, soldier:130, tank:160, hq:160, depot:100, barracks:110, factory:110, starport:110, medivac:140, turret:100 };
 
 // Retourne tous les points de vision (x,y,r) d'une faction
 function getVisionCircles(fid){
@@ -538,7 +572,7 @@ function doMedivac(u, dt){
   if(!healed) u.energy = Math.min(mt.maxEnergy, u.energy + mt.energyRegen * dt);
 
   // ── Se positionner sur l'allié le plus blessé à portée de soin ──
-  let combatAllies = allies.filter(v=>v.type==='soldier'||v.type==='marauder'||v.type==='tank');
+  let combatAllies = allies.filter(v=>v.type==='marine'||v.type==='marauder'||v.type==='tank');
 
   // Priorité : allié blessé le plus proche
   let mostWounded = combatAllies.filter(v=>v.hp<v.maxHp*0.8)
@@ -580,6 +614,9 @@ function doMedivac(u, dt){
 // ─── COMBAT ──────────────────────────────────────────────────────────────────
 // Logique combat unité militaire — NE PASSE JAMAIS À IDLE
 function doCombatUnit(u, dt) {
+  // ── Décompte stimulant ──
+  if(u.stimActive){ u.stimTimer-=dt; if(u.stimTimer<=0) u.stimActive=false; }
+
   // ── Retraite si PV critiques (< 25%) ──
   const hpRatio = u.hp / u.maxHp;
   if(hpRatio < 0.25 && u.type !== 'tank'){
@@ -680,14 +717,19 @@ function doCombatUnit(u, dt) {
     if(isTank && d <= UNIT_TYPES.tank.range * 3){
       u.siegeMode = 'deploying'; u.siegeTimer = 2; return;
     }
-    u.x += Math.cos(u.angle) * u.speed * 60 * dt;
-    u.y += Math.sin(u.angle) * u.speed * 60 * dt;
+    u.x += Math.cos(u.angle) * u.speed * (u.stimActive?1.5:1) * 60 * dt;
+    u.y += Math.sin(u.angle) * u.speed * (u.stimActive?1.5:1) * 60 * dt;
   } else {
+    // ── Auto-stim à l'engagement ──
+    if(!u.stimActive && factions[u.faction]?.stimResearched && (u.type==='marine'||u.type==='marauder') && u.hp > u.maxHp*0.4){
+      u.hp = Math.max(1, u.hp * 0.67);
+      u.stimActive = true; u.stimTimer = 15;
+    }
     if(u.attackCooldown<=0){
       let died = damageEntity(target, u.attack, u);
       spawnBullet(u.x, u.y, target.x, target.y, u.faction);
       let cd = u.type==='marauder' ? 1.2+Math.random()*0.3 : 0.7+Math.random()*0.35;
-      u.attackCooldown = cd;
+      u.attackCooldown = cd / (u.stimActive?1.5:1);
       if(died){ u.killCount++; factions[u.faction].stats.killCount++; }
     }
     u.attackCooldown = Math.max(0, u.attackCooldown - dt);
@@ -717,7 +759,7 @@ function resolveTarget(u) {
 }
 
 function pickCombatTarget(u) {
-  if(u.type==='soldier'||u.type==='marauder'||u.type==='tank'){
+  if(u.type==='marine'||u.type==='marauder'||u.type==='tank'){
     let eb = visibleEnemyBuildings(u.faction);
     let hqs = eb.filter(b=>b.type==='hq');
     if(hqs.length) return findClosest(hqs, u.x, u.y);
@@ -854,12 +896,12 @@ function spawnExplosion(x,y,color){
 }
 
 // ─── IA STRATÉGIQUE ───────────────────────────────────────────────────────────
-function milPower(fid){return myUnits(fid).filter(u=>u.type==='soldier').length+myUnits(fid).filter(u=>u.type==='marauder').length*1.5+myUnits(fid).filter(u=>u.type==='tank').length*3;}
+function milPower(fid){return myUnits(fid).filter(u=>u.type==='marine').length+myUnits(fid).filter(u=>u.type==='marauder').length*1.5+myUnits(fid).filter(u=>u.type==='tank').length*3;}
 
 function runAI(fid,dt) {
   const ai=aiState[fid], f=factions[fid], p=ai.params;
   const myB=myBuildings(fid), myU=myUnits(fid);
-  const soldiers=myU.filter(u=>u.type==='soldier'||u.type==='marauder'||u.type==='tank');
+  const soldiers=myU.filter(u=>u.type==='marine'||u.type==='marauder'||u.type==='tank');
   const workers=myU.filter(u=>u.type==='worker');
   const hq=buildings.find(b=>b.id===f.hqId);
   if(!hq) return;
@@ -874,7 +916,7 @@ function runAI(fid,dt) {
   // ── Analyse composition ennemie pour réponse adaptative ──
   const visibleEnemies = visibleEnemyUnits(fid);
   const enemyTankCount = visibleEnemies.filter(v=>v.type==='tank').length;
-  const enemyInfCount  = visibleEnemies.filter(v=>v.type==='soldier'||v.type==='marauder').length;
+  const enemyInfCount  = visibleEnemies.filter(v=>v.type==='marine'||v.type==='marauder').length;
   // Si beaucoup de tanks ennemis → forcer production maraudeurs (déjà géré par alternance, mais on peut ajuster le ratio)
   if(!ai.compositionHint) ai.compositionHint = 'balanced';
   if(enemyTankCount >= 3) ai.compositionHint = 'marauder'; // anti-tank
@@ -908,7 +950,7 @@ function runAI(fid,dt) {
   const scoutsNeeded = knownEnemyHQs.length===0 ? (explored<0.3 ? 2 : 1) : 0;
   const currentScouts = soldiers.filter(s=>s.state==='scout').length;
   if(currentScouts < scoutsNeeded){
-    let candidates = soldiers.filter(s=>s.state!=='scout' && s.type==='soldier'||s.type==='marauder');
+    let candidates = soldiers.filter(s=>s.state!=='scout' && s.type==='marine'||s.type==='marauder');
     let toAssign = scoutsNeeded - currentScouts;
     candidates.slice(0, toAssign).forEach(s=>{ s.state='scout'; s.scoutTarget=null; s.target=null; });
   }
@@ -934,6 +976,8 @@ function runAI(fid,dt) {
     else if(factories<1&&res>=costFac&&barracks>=1&&soldiers.length>=3) toBuild='factory';
     // Starport dès que vespène disponible
     else if(starports<1&&res>=BUILDING_TYPES.starport.cost&&vesp>=BUILDING_TYPES.starport.costVespene&&factories>=1) toBuild='starport';
+    // Tourelles défensives (max 3 par faction, dès qu'on a des soldats)
+    else if(barracks>=1&&soldiers.length>=2&&myB.filter(b=>b.type==='turret').length<3&&res>=75) toBuild='turret';
     // Réponse adaptative : si hint anti-tank → plus de casernes ; si anti-inf → plus d'usines
     else if(ai.compositionHint==='marauder'&&barracks<4&&res>=costBar) toBuild='barracks';
     else if(ai.compositionHint==='tank'&&factories<3&&res>=costFac&&vesp>=BUILDING_TYPES.factory.costVespene) toBuild='factory';
@@ -955,6 +999,10 @@ function runAI(fid,dt) {
           let tr=freeRes.length?findClosest(freeRes,hq.x,hq.y):null;
           bx=tr?tr.x+(Math.random()-0.5)*50:W/2+(fid==='nord'||fid==='ouest'?-80:80);
           by=tr?tr.y+(Math.random()-0.5)*50:H/2+(fid==='nord'||fid==='est'?-60:60);
+        } else if(toBuild==='turret'){
+          // Anneau autour du HQ à 70-120px
+          let angle=Math.random()*Math.PI*2, r2=70+Math.random()*50;
+          bx=hq.x+Math.cos(angle)*r2; by=hq.y+Math.sin(angle)*r2;
         } else {
           let cx=W/2,cy=H/2,dl=Math.hypot(cx-hq.x,cy-hq.y)||1;
           bx=hq.x+((cx-hq.x)/dl)*(80+Math.random()*80)+(Math.random()-0.5)*60;
@@ -967,6 +1015,41 @@ function runAI(fid,dt) {
           f.resources-=cost; f.vespene-=costVesp;
           let b=makeBuilding(fid,toBuild,bx,by);
           buildings.push(b); worker.state='build'; worker.buildTarget=b.id;
+        }
+      }
+    }
+  }
+
+  // ── Modules de casernes ──
+  {
+    const moduleTimerKey = 'moduleTimer';
+    if(!ai[moduleTimerKey]) ai[moduleTimerKey] = 0;
+    ai[moduleTimerKey] -= dt;
+    if(ai[moduleTimerKey] <= 0) {
+      ai[moduleTimerKey] = 5 + Math.random() * 5;
+      const moduleCost = 50, moduleCostVesp = 50;
+      const myBarracks = myB.filter(b=>b.type==='barracks'&&b.buildProgress>=1);
+      // Compter les modules existants/en cours
+      const techlabCount = myBarracks.filter(b=>b.module==='techlab'||b.modulePending==='techlab').length;
+      const reactorCount = myBarracks.filter(b=>b.module==='reactor'||b.modulePending==='reactor').length;
+      // Trouver une caserne sans module ni module en attente
+      const freeBarracks = myBarracks.filter(b=>!b.module&&!b.modulePending);
+      if(freeBarracks.length > 0 && f.resources >= moduleCost && f.vespene >= moduleCostVesp) {
+        // Prioriser tech lab (permet marauders), puis réacteur
+        let moduleType = techlabCount === 0 ? 'techlab' : 'reactor';
+        let target = freeBarracks[0];
+        f.resources -= moduleCost; f.vespene -= moduleCostVesp;
+        target.modulePending = moduleType;
+        target.moduleBuildTimer = 30;
+        log(`${f.name} — Construction ${moduleType==='techlab'?'Centre Technique':'Réacteur'}...`, fid);
+      }
+      // Déclencher recherche Stimulant si tech lab opérationnel et non recherché
+      if(!f.stimResearched && !f.stimResearching) {
+        const hasActiveTechlab = myBarracks.some(b=>b.module==='techlab');
+        if(hasActiveTechlab) {
+          f.stimResearching = true;
+          f.stimResearchTimer = 60;
+          log(`${f.name} — Recherche Stimulant lancée...`, fid);
         }
       }
     }
@@ -1083,7 +1166,49 @@ function checkWin(){
   }
 }
 
-// ─── APPRENTISSAGE ────────────────────────────────────────────────────────────
+// ─── ALGORITHME GÉNÉTIQUE ─────────────────────────────────────────────────────
+function crossoverParams(a, b) {
+  const r=()=>Math.random()<0.5;
+  return {
+    assaultThreshold: r()?a.assaultThreshold:b.assaultThreshold,
+    attackInterval:   r()?a.attackInterval  :b.attackInterval,
+    defenseRadius:    r()?a.defenseRadius   :b.defenseRadius,
+    expansionDrive:   r()?a.expansionDrive  :b.expansionDrive,
+    targetPriority:   r()?a.targetPriority  :b.targetPriority,
+    harassEarly:      r()?a.harassEarly     :b.harassEarly,
+  };
+}
+
+function mutateParams(p, rate) {
+  if(Math.random()<rate) p.assaultThreshold=Math.max(3,Math.min(20,p.assaultThreshold+(Math.random()-0.5)*4));
+  if(Math.random()<rate) p.attackInterval  =Math.max(6,Math.min(30, p.attackInterval  +(Math.random()-0.5)*6));
+  if(Math.random()<rate) p.defenseRadius   =Math.max(100,Math.min(400,p.defenseRadius +(Math.random()-0.5)*60));
+  if(Math.random()<rate) p.expansionDrive  =Math.max(0,Math.min(1,  p.expansionDrive  +(Math.random()-0.5)*0.25));
+  if(Math.random()<rate){const pr=['military','workers','buildings'];p.targetPriority=pr[Math.floor(Math.random()*3)];}
+  if(Math.random()<rate) p.harassEarly=Math.random()<0.5;
+}
+
+function adaptParams(fid, agent, place, ranking) {
+  const last=agent.history[agent.history.length-1];
+  // Score de fitness : place + kills - pertes
+  const fitness=(4-place)*10+(last?.killCount||0)*0.5-(last?.lossCount||0)*0.2;
+  agent.fitness=agent.fitness===undefined?fitness:agent.fitness*0.6+fitness*0.4;
+
+  if(place===0){
+    // Gagnant : légère mutation pour explorer autour de la stratégie gagnante
+    mutateParams(agent.params, 0.06);
+    return;
+  }
+  // Perdants : croisement avec le gagnant + mutation croissante selon place
+  const winnerId=ranking[0].id;
+  const winnerParams=agentMemory.agents[winnerId].params;
+  const mutRate=0.10+place*0.07; // 2e→17%, 3e→24%, 4e→31%
+  agent.params=crossoverParams(agent.params, winnerParams);
+  mutateParams(agent.params, mutRate);
+  log(`${factions[fid]?.name||fid} ← ${factions[winnerId]?.name||winnerId} ADN (mut ${Math.round(mutRate*100)}%)`,'neutral');
+}
+
+// ─── FIN DE PARTIE ────────────────────────────────────────────────────────────
 function endGame(winnerId){
   let elim=FACTION_DEFS.filter(fd=>fd.id!==winnerId).sort((a,b)=>(factions[b.id].eliminatedAt||0)-(factions[a.id].eliminatedAt||0));
   let ranking=winnerId?[FACTION_DEFS.find(f=>f.id===winnerId),...elim]:elim;
@@ -1093,7 +1218,7 @@ function endGame(winnerId){
     agent.totalGames++; if(place===0) agent.wins++;
     agent.history.push({place:place+1,survivalTime:f.eliminatedAt||gameTime,resourcesGathered:st.resourcesGathered,killCount:st.killCount,lossCount:st.lossCount});
     if(agent.history.length>10) agent.history.shift();
-    adaptParams(fd.id,agent,place);
+    adaptParams(fd.id,agent,place,ranking);
   });
 
   saveMemory(agentMemory);
@@ -1261,6 +1386,18 @@ function drawBuildings(){
       drawHex(0,0,s/2); ctx.fill(); ctx.stroke(); ctx.shadowBlur=0;
       ctx.fillStyle=bright; ctx.font='bold 9px Orbitron';
       ctx.textAlign='center'; ctx.textBaseline='middle'; ctx.fillText('DEP',0,0);
+    } else if(b.type==='turret'){
+      ctx.globalAlpha=0.35+b.buildProgress*0.65;
+      if(b.buildProgress<1) ctx.setLineDash([3,3]);
+      ctx.shadowBlur=b.attackCooldown<0.3?14:5; ctx.shadowColor=bright;
+      ctx.strokeStyle=bright; ctx.lineWidth=1.5; ctx.fillStyle=dim;
+      ctx.beginPath(); ctx.moveTo(0,-s/2); ctx.lineTo(s/2,0); ctx.lineTo(0,s/2); ctx.lineTo(-s/2,0); ctx.closePath();
+      ctx.fill(); ctx.stroke(); ctx.shadowBlur=0; ctx.setLineDash([]);
+      ctx.strokeStyle=bright; ctx.lineWidth=2.5;
+      ctx.beginPath(); ctx.moveTo(0,0); ctx.lineTo(s*0.65,0); ctx.stroke();
+      ctx.fillStyle=bright; ctx.font='bold 7px Orbitron';
+      ctx.textAlign='center'; ctx.textBaseline='middle'; ctx.fillText('▲',-1,0);
+      if(b.buildProgress<1){ctx.fillStyle='#111';ctx.fillRect(-s/2,s/2+2,s,3);ctx.fillStyle=bright;ctx.fillRect(-s/2,s/2+2,s*b.buildProgress,3);}
     } else {
       ctx.globalAlpha=0.35+b.buildProgress*0.65;
       if(b.buildProgress<1) ctx.setLineDash([3,3]);
@@ -1270,6 +1407,36 @@ function drawBuildings(){
       ctx.fillStyle=bright; ctx.font='10px Share Tech Mono';
       ctx.textAlign='center'; ctx.textBaseline='middle'; ctx.fillText(b.label,0,0);
       if(b.buildProgress<1){ctx.fillStyle='#111';ctx.fillRect(-s/2,s/2+2,s,3);ctx.fillStyle=bright;ctx.fillRect(-s/2,s/2+2,s*b.buildProgress,3);}
+      // ── Indicateur module caserne ──
+      if(b.type==='barracks'&&b.buildProgress>=1){
+        const mod=b.module||b.modulePending;
+        if(mod){
+          const mc=mod==='techlab'?'#ff9500':'#00cfff';
+          const ml=mod==='techlab'?'CT':'RÉ';
+          ctx.globalAlpha=b.module?1:0.6;
+          ctx.fillStyle=mc; ctx.strokeStyle='#000'; ctx.lineWidth=0.5;
+          ctx.fillRect(s/2-11,-s/2,11,11); ctx.strokeRect(s/2-11,-s/2,11,11);
+          ctx.fillStyle='#000'; ctx.font='bold 7px Share Tech Mono';
+          ctx.textAlign='center'; ctx.textBaseline='middle'; ctx.fillText(ml,s/2-5.5,-s/2+5.5);
+          // Barre de progression si module en construction
+          if(b.modulePending&&!b.module){
+            let prog=1-b.moduleBuildTimer/30;
+            ctx.globalAlpha=1; ctx.fillStyle='#111'; ctx.fillRect(s/2-11,-s/2+11,11,2);
+            ctx.fillStyle=mc; ctx.fillRect(s/2-11,-s/2+11,11*prog,2);
+          }
+          ctx.globalAlpha=1;
+        }
+        // Icône stimulant
+        const f2=factions[b.faction];
+        if(f2?.stimResearched){
+          ctx.fillStyle='#ffe000'; ctx.font='bold 9px Orbitron';
+          ctx.textAlign='left'; ctx.textBaseline='top'; ctx.fillText('⚡',-s/2,-s/2);
+        } else if(f2?.stimResearching){
+          let prog=1-f2.stimResearchTimer/60;
+          ctx.fillStyle='#332200'; ctx.fillRect(-s/2,-s/2,s,2);
+          ctx.fillStyle='#ffe000'; ctx.fillRect(-s/2,-s/2,s*prog,2);
+        }
+      }
     }
     if(b.hp<b.maxHp){ctx.globalAlpha=1;let bw=s;ctx.fillStyle='#300';ctx.fillRect(-bw/2,-s/2-7,bw,3);let ratio=Math.max(0,b.hp/b.maxHp);ctx.fillStyle='#0d0';ctx.fillRect(-bw/2,-s/2-7,bw*ratio,3);}
     ctx.restore();
@@ -1319,6 +1486,8 @@ function drawUnits(){
       ctx.fillRect(u.x-u.size, u.y-u.size-9, ew*er, 2);
       continue;
     } else if(u.type==='marauder'){
+      // Halo stim
+      if(u.stimActive){ ctx.shadowBlur=18; ctx.shadowColor='#fff'; }
       // Corps trapu : hexagone aplati
       ctx.beginPath();
       ctx.moveTo(u.size*1.2, 0);
@@ -1329,10 +1498,12 @@ function drawUnits(){
       ctx.lineTo(u.size*0.6, u.size*0.9);
       ctx.closePath(); ctx.fill();
       // Indicateur blindage
-      ctx.shadowBlur=0; ctx.strokeStyle='rgba(255,255,255,0.4)'; ctx.lineWidth=1.5;
+      ctx.shadowBlur=0; ctx.strokeStyle=u.stimActive?'rgba(255,255,255,0.9)':'rgba(255,255,255,0.4)'; ctx.lineWidth=1.5;
       ctx.stroke();
-    } else if(u.type==='soldier'){
+    } else if(u.type==='marine'){
+      if(u.stimActive){ ctx.shadowBlur=14; ctx.shadowColor='#fff'; }
       ctx.beginPath();ctx.moveTo(u.size,0);ctx.lineTo(-u.size/2,-u.size/2);ctx.lineTo(-u.size/2,u.size/2);ctx.closePath();ctx.fill();
+      ctx.shadowBlur=0;
     } else {
       // Tank
       ctx.fillRect(-u.size,-u.size/1.5,u.size*2,u.size*1.3);
@@ -1417,7 +1588,7 @@ function updateHUD(){
     let p=agentMemory.agents[fd.id].params,ag=agentMemory.agents[fd.id];
     let winRate=ag.totalGames>0?Math.round(ag.wins/ag.totalGames*100):0;
     return `<div style="margin-bottom:7px;padding-left:4px;border-left:2px solid ${fd.color}40">
-      <div style="color:${fd.color};font-weight:bold;margin-bottom:2px">${fd.name} — ${winRate}% WR</div>
+      <div style="color:${fd.color};font-weight:bold;margin-bottom:2px">${fd.name} — ${winRate}% WR${ag.fitness!==undefined?' 🧬'+Math.round(ag.fitness):''}</div>
       <div class="learn-row"><span>Seuil assaut</span><span class="learn-val">${p.assaultThreshold}</span></div>
       <div class="learn-row"><span>Intervalle att.</span><span class="learn-val">${Math.round(p.attackInterval)}s</span></div>
       <div class="learn-row"><span>Cible</span><span class="learn-val">${p.targetPriority.slice(0,4)}</span></div>
@@ -1425,6 +1596,31 @@ function updateHUD(){
       <div class="learn-row"><span>Harcèle.</span><span class="learn-val">${p.harassEarly?'✓':'✗'}</span></div>
     </div>`;
   }).join('');
+}
+
+function updateResourceGraph(){
+  const c=document.getElementById('resGraph'); if(!c) return;
+  const cx=c.getContext('2d'); const CW=c.width,CH=c.height;
+  cx.fillStyle='#050a0f'; cx.fillRect(0,0,CW,CH);
+  let maxM=200;
+  for(let fd of FACTION_DEFS) for(let pt of (resourceHistory[fd.id]||[])) if(pt.m>maxM) maxM=pt.m;
+  const P={l:2,r:2,t:3,b:3}, iW=CW-P.l-P.r, iH=CH-P.t-P.b;
+  cx.strokeStyle='#152535'; cx.lineWidth=1; cx.setLineDash([3,5]);
+  cx.beginPath(); cx.moveTo(P.l,P.t+iH*0.5); cx.lineTo(CW-P.r,P.t+iH*0.5); cx.stroke();
+  cx.setLineDash([]);
+  for(let fd of FACTION_DEFS){
+    const hist=resourceHistory[fd.id]||[]; if(hist.length<2) continue;
+    cx.strokeStyle=fd.color; cx.lineWidth=1.5; cx.globalAlpha=0.85;
+    cx.beginPath();
+    hist.forEach((pt,i)=>{
+      let x=P.l+iW*(i/(hist.length-1));
+      let y=P.t+iH*(1-Math.min(pt.m/maxM,1));
+      i===0?cx.moveTo(x,y):cx.lineTo(x,y);
+    });
+    cx.stroke(); cx.globalAlpha=1;
+  }
+  cx.font='8px Share Tech Mono'; cx.textAlign='left'; cx.fillStyle='#2a4a6a';
+  cx.fillText('💎 '+Math.round(maxM),P.l+1,P.t+8);
 }
 
 function log(msg,fid){
@@ -1708,7 +1904,7 @@ function startSimulation(totalGames){
     FACTION_DEFS.forEach((fd,i)=>{
       let hq=makeBuilding(fd.id,'hq',hqPos[i].x,hqPos[i].y);
       buildings.push(hq);
-      factions[fd.id]={resources:200,vespene:0,hqId:hq.id,color:fd.color,dim:fd.dim,name:fd.name,eliminated:false,eliminatedAt:null,knownEnemyBuildings:new Set(),stats:{resourcesGathered:0,killCount:0,lossCount:0}};
+      factions[fd.id]={resources:200,vespene:0,hqId:hq.id,color:fd.color,dim:fd.dim,name:fd.name,eliminated:false,eliminatedAt:null,knownEnemyBuildings:new Set(),stats:{resourcesGathered:0,killCount:0,lossCount:0},stimResearched:false,stimResearching:false,stimResearchTimer:0};
       for(let w=0;w<6;w++) units.push(makeUnit(fd.id,'worker',hq.x+(Math.random()-0.5)*50,hq.y+(Math.random()-0.5)*50));
       const p=agentMemory.agents[fd.id].params;
       aiState[fd.id]={phase:'economy',buildTimer:2+Math.random()*3,attackTimer:p.attackInterval*(0.8+Math.random()*0.4),params:JSON.parse(JSON.stringify(p))};
@@ -1743,7 +1939,7 @@ function startSimulation(totalGames){
       agent.totalGames++; if(place===0) agent.wins++;
       agent.history.push({place:place+1,survivalTime:f.eliminatedAt||gameTime,resourcesGathered:st.resourcesGathered,killCount:st.killCount,lossCount:st.lossCount});
       if(agent.history.length>10) agent.history.shift();
-      adaptParams(fd.id,agent,place);
+      adaptParams(fd.id,agent,place,ranking);
     });
     if(winnerId){
       let wname=factions[winnerId]?.name||winnerId;
@@ -1810,16 +2006,32 @@ function updateGameHeadless(dt){
       }
     }
     if(b.type==='barracks'){
+      // ── Build module ──
+      if(b.modulePending&&!b.module){
+        b.moduleBuildTimer-=dt;
+        if(b.moduleBuildTimer<=0){b.module=b.modulePending;b.modulePending=null;log(`${factions[b.faction]?.name} — ${b.module==='techlab'?'Centre Technique':'Réacteur'} opérationnel`,b.faction);}
+      }
+      // ── Stim research (techlab requis) ──
+      if(b.module==='techlab'&&f.stimResearching&&!f.stimResearched){
+        f.stimResearchTimer-=dt;
+        if(f.stimResearchTimer<=0){f.stimResearched=true;f.stimResearching=false;log(`${f.name} — ⚡ STIMULANT actif ! (+50% marines+marauders)`,b.faction);}
+      }
+      // ── Spawn ──
       b.spawnTimer-=dt;
       if(b.spawnTimer<=0){
-        let infantry=myUnits(b.faction).filter(u=>u.type==='soldier'||u.type==='marauder');
+        let infantry=myUnits(b.faction).filter(u=>u.type==='marine'||u.type==='marauder');
         if(infantry.length<18){
+          let canMarauder=b.module==='techlab';
           let marauders=infantry.filter(u=>u.type==='marauder').length;
-          let soldiers2=infantry.filter(u=>u.type==='soldier').length;
-          let spawnType=(soldiers2>=marauders*2)?'marauder':'soldier';
-          let cost=spawnType==='marauder'?75:50;
-          if(f.resources>=cost){f.resources-=cost;units.push(makeUnit(b.faction,spawnType,b.x+(Math.random()-0.5)*30,b.y+(Math.random()-0.5)*30));b.spawnTimer=spawnType==='marauder'?13:10;}
-          else b.spawnTimer=4;
+          let marines2=infantry.filter(u=>u.type==='marine').length;
+          let spawnType=(canMarauder&&marines2>=marauders*2)?'marauder':'marine';
+          let count=(spawnType==='marine'&&b.module==='reactor')?2:1;
+          let cost=spawnType==='marauder'?75:50*count, costVesp=spawnType==='marauder'?25:0;
+          if(f.resources>=cost&&f.vespene>=costVesp){
+            f.resources-=cost;f.vespene-=costVesp;
+            for(let i=0;i<count;i++) units.push(makeUnit(b.faction,spawnType,b.x+(Math.random()-0.5)*30,b.y+(Math.random()-0.5)*30));
+            b.spawnTimer=spawnType==='marauder'?13:10;
+          } else b.spawnTimer=4;
         } else b.spawnTimer=4;
       }
     }
