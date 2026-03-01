@@ -67,6 +67,7 @@
   <div class="sidebar">
     <div><h3>CLASSEMENT</h3><div id="rankPanel"></div></div>
     <div><h3>APPRENTISSAGE</h3><div id="learnPanel"></div></div>
+    <div><h3>RESSOURCES</h3><canvas id="resGraph" width="196" height="70" style="width:100%;display:block;border:1px solid #152535;border-radius:2px;"></canvas></div>
     <div><h3>BATTLE LOG</h3><div id="battleLog"></div></div>
   </div>
 </div>
@@ -178,6 +179,7 @@ let factions={}, aiState={};
 let gameRunning=false, speed=1, gameTime=0, lastTime=0, uid=0;
 let fogFaction=null; // null = vue globale (pas de brouillard)
 let fpsCount=0, fpsTimer=0, fpsCur=60, animFrame;
+let resourceHistory={}, lastResourceSample=0;
 
 const UNIT_TYPES = {
   worker:   {hp:40,  speed:0.6,  attack:3,  range:15, size:4},
@@ -192,6 +194,7 @@ const BUILDING_TYPES = {
   barracks:  {hp:200, size:20, cost:150, costVespene:0,  label:'BAR'},
   factory:   {hp:250, size:22, cost:150, costVespene:75, label:'FAC'},
   starport:  {hp:200, size:22, cost:100, costVespene:100,label:'STP'},
+  turret:    {hp:150, size:16, cost:75,  costVespene:0,  label:'TUR', attack:18, range:90},
 };
 
 // ─── CANVAS & MAP ─────────────────────────────────────────────────────────────
@@ -247,6 +250,7 @@ function startGame() {
   overlay.style.display='none';
   gameRunning=true; gameTime=0; uid=0;
   battleLog=[]; document.getElementById('battleLog').innerHTML='';
+  resourceHistory={}; lastResourceSample=0; FACTION_DEFS.forEach(fd=>resourceHistory[fd.id]=[]);
   buildings=[]; units=[]; particles=[]; resources=[]; factions={}; aiState={};
   resize(); generateMap(); spawnResources(); initExploreGrid();
   agentMemory.generation++;
@@ -286,6 +290,16 @@ function loop(ts) {
   const stepDt=totalDt/steps;
   for(let i=0;i<steps;i++){gameTime+=stepDt;updateGame(stepDt);}
   updateTimer(); render(); updateHUD();
+  if(gameRunning&&gameTime-lastResourceSample>5){
+    lastResourceSample=gameTime;
+    FACTION_DEFS.forEach(fd=>{
+      if(!factions[fd.id]?.eliminated){
+        let h=resourceHistory[fd.id]||[]; h.push({t:gameTime,m:factions[fd.id].resources,v:factions[fd.id].vespene||0});
+        if(h.length>50) h.shift(); resourceHistory[fd.id]=h;
+      }
+    });
+    updateResourceGraph();
+  }
 }
 function updateTimer(){let m=Math.floor(gameTime/60),s=Math.floor(gameTime%60);document.getElementById('timerEl').textContent=pad(m)+':'+pad(s);}
 function pad(n){return String(n).padStart(2,'0');}
@@ -392,7 +406,7 @@ function activeEnemyUnits(fid){return units.filter(v=>v.faction!==fid&&!factions
 function activeEnemyBuildings(fid){return buildings.filter(b=>b.faction!==fid&&b.buildProgress>=1&&!factions[b.faction]?.eliminated);}
 
 // ─── SYSTÈME DE VISION IA ─────────────────────────────────────────────────────
-const VISION_RADIUS = { worker:90, soldier:130, tank:160, hq:160, depot:100, barracks:110, factory:110, starport:110, medivac:140 };
+const VISION_RADIUS = { worker:90, soldier:130, tank:160, hq:160, depot:100, barracks:110, factory:110, starport:110, medivac:140, turret:100 };
 
 // Retourne tous les points de vision (x,y,r) d'une faction
 function getVisionCircles(fid){
@@ -934,6 +948,8 @@ function runAI(fid,dt) {
     else if(factories<1&&res>=costFac&&barracks>=1&&soldiers.length>=3) toBuild='factory';
     // Starport dès que vespène disponible
     else if(starports<1&&res>=BUILDING_TYPES.starport.cost&&vesp>=BUILDING_TYPES.starport.costVespene&&factories>=1) toBuild='starport';
+    // Tourelles défensives (max 3 par faction, dès qu'on a des soldats)
+    else if(barracks>=1&&soldiers.length>=2&&myB.filter(b=>b.type==='turret').length<3&&res>=75) toBuild='turret';
     // Réponse adaptative : si hint anti-tank → plus de casernes ; si anti-inf → plus d'usines
     else if(ai.compositionHint==='marauder'&&barracks<4&&res>=costBar) toBuild='barracks';
     else if(ai.compositionHint==='tank'&&factories<3&&res>=costFac&&vesp>=BUILDING_TYPES.factory.costVespene) toBuild='factory';
@@ -955,6 +971,10 @@ function runAI(fid,dt) {
           let tr=freeRes.length?findClosest(freeRes,hq.x,hq.y):null;
           bx=tr?tr.x+(Math.random()-0.5)*50:W/2+(fid==='nord'||fid==='ouest'?-80:80);
           by=tr?tr.y+(Math.random()-0.5)*50:H/2+(fid==='nord'||fid==='est'?-60:60);
+        } else if(toBuild==='turret'){
+          // Anneau autour du HQ à 70-120px
+          let angle=Math.random()*Math.PI*2, r2=70+Math.random()*50;
+          bx=hq.x+Math.cos(angle)*r2; by=hq.y+Math.sin(angle)*r2;
         } else {
           let cx=W/2,cy=H/2,dl=Math.hypot(cx-hq.x,cy-hq.y)||1;
           bx=hq.x+((cx-hq.x)/dl)*(80+Math.random()*80)+(Math.random()-0.5)*60;
@@ -1083,7 +1103,49 @@ function checkWin(){
   }
 }
 
-// ─── APPRENTISSAGE ────────────────────────────────────────────────────────────
+// ─── ALGORITHME GÉNÉTIQUE ─────────────────────────────────────────────────────
+function crossoverParams(a, b) {
+  const r=()=>Math.random()<0.5;
+  return {
+    assaultThreshold: r()?a.assaultThreshold:b.assaultThreshold,
+    attackInterval:   r()?a.attackInterval  :b.attackInterval,
+    defenseRadius:    r()?a.defenseRadius   :b.defenseRadius,
+    expansionDrive:   r()?a.expansionDrive  :b.expansionDrive,
+    targetPriority:   r()?a.targetPriority  :b.targetPriority,
+    harassEarly:      r()?a.harassEarly     :b.harassEarly,
+  };
+}
+
+function mutateParams(p, rate) {
+  if(Math.random()<rate) p.assaultThreshold=Math.max(3,Math.min(20,p.assaultThreshold+(Math.random()-0.5)*4));
+  if(Math.random()<rate) p.attackInterval  =Math.max(6,Math.min(30, p.attackInterval  +(Math.random()-0.5)*6));
+  if(Math.random()<rate) p.defenseRadius   =Math.max(100,Math.min(400,p.defenseRadius +(Math.random()-0.5)*60));
+  if(Math.random()<rate) p.expansionDrive  =Math.max(0,Math.min(1,  p.expansionDrive  +(Math.random()-0.5)*0.25));
+  if(Math.random()<rate){const pr=['military','workers','buildings'];p.targetPriority=pr[Math.floor(Math.random()*3)];}
+  if(Math.random()<rate) p.harassEarly=Math.random()<0.5;
+}
+
+function adaptParams(fid, agent, place, ranking) {
+  const last=agent.history[agent.history.length-1];
+  // Score de fitness : place + kills - pertes
+  const fitness=(4-place)*10+(last?.killCount||0)*0.5-(last?.lossCount||0)*0.2;
+  agent.fitness=agent.fitness===undefined?fitness:agent.fitness*0.6+fitness*0.4;
+
+  if(place===0){
+    // Gagnant : légère mutation pour explorer autour de la stratégie gagnante
+    mutateParams(agent.params, 0.06);
+    return;
+  }
+  // Perdants : croisement avec le gagnant + mutation croissante selon place
+  const winnerId=ranking[0].id;
+  const winnerParams=agentMemory.agents[winnerId].params;
+  const mutRate=0.10+place*0.07; // 2e→17%, 3e→24%, 4e→31%
+  agent.params=crossoverParams(agent.params, winnerParams);
+  mutateParams(agent.params, mutRate);
+  log(`${factions[fid]?.name||fid} ← ${factions[winnerId]?.name||winnerId} ADN (mut ${Math.round(mutRate*100)}%)`,'neutral');
+}
+
+// ─── FIN DE PARTIE ────────────────────────────────────────────────────────────
 function endGame(winnerId){
   let elim=FACTION_DEFS.filter(fd=>fd.id!==winnerId).sort((a,b)=>(factions[b.id].eliminatedAt||0)-(factions[a.id].eliminatedAt||0));
   let ranking=winnerId?[FACTION_DEFS.find(f=>f.id===winnerId),...elim]:elim;
@@ -1093,7 +1155,7 @@ function endGame(winnerId){
     agent.totalGames++; if(place===0) agent.wins++;
     agent.history.push({place:place+1,survivalTime:f.eliminatedAt||gameTime,resourcesGathered:st.resourcesGathered,killCount:st.killCount,lossCount:st.lossCount});
     if(agent.history.length>10) agent.history.shift();
-    adaptParams(fd.id,agent,place);
+    adaptParams(fd.id,agent,place,ranking);
   });
 
   saveMemory(agentMemory);
@@ -1261,6 +1323,18 @@ function drawBuildings(){
       drawHex(0,0,s/2); ctx.fill(); ctx.stroke(); ctx.shadowBlur=0;
       ctx.fillStyle=bright; ctx.font='bold 9px Orbitron';
       ctx.textAlign='center'; ctx.textBaseline='middle'; ctx.fillText('DEP',0,0);
+    } else if(b.type==='turret'){
+      ctx.globalAlpha=0.35+b.buildProgress*0.65;
+      if(b.buildProgress<1) ctx.setLineDash([3,3]);
+      ctx.shadowBlur=b.attackCooldown<0.3?14:5; ctx.shadowColor=bright;
+      ctx.strokeStyle=bright; ctx.lineWidth=1.5; ctx.fillStyle=dim;
+      ctx.beginPath(); ctx.moveTo(0,-s/2); ctx.lineTo(s/2,0); ctx.lineTo(0,s/2); ctx.lineTo(-s/2,0); ctx.closePath();
+      ctx.fill(); ctx.stroke(); ctx.shadowBlur=0; ctx.setLineDash([]);
+      ctx.strokeStyle=bright; ctx.lineWidth=2.5;
+      ctx.beginPath(); ctx.moveTo(0,0); ctx.lineTo(s*0.65,0); ctx.stroke();
+      ctx.fillStyle=bright; ctx.font='bold 7px Orbitron';
+      ctx.textAlign='center'; ctx.textBaseline='middle'; ctx.fillText('▲',-1,0);
+      if(b.buildProgress<1){ctx.fillStyle='#111';ctx.fillRect(-s/2,s/2+2,s,3);ctx.fillStyle=bright;ctx.fillRect(-s/2,s/2+2,s*b.buildProgress,3);}
     } else {
       ctx.globalAlpha=0.35+b.buildProgress*0.65;
       if(b.buildProgress<1) ctx.setLineDash([3,3]);
@@ -1417,7 +1491,7 @@ function updateHUD(){
     let p=agentMemory.agents[fd.id].params,ag=agentMemory.agents[fd.id];
     let winRate=ag.totalGames>0?Math.round(ag.wins/ag.totalGames*100):0;
     return `<div style="margin-bottom:7px;padding-left:4px;border-left:2px solid ${fd.color}40">
-      <div style="color:${fd.color};font-weight:bold;margin-bottom:2px">${fd.name} — ${winRate}% WR</div>
+      <div style="color:${fd.color};font-weight:bold;margin-bottom:2px">${fd.name} — ${winRate}% WR${ag.fitness!==undefined?' 🧬'+Math.round(ag.fitness):''}</div>
       <div class="learn-row"><span>Seuil assaut</span><span class="learn-val">${p.assaultThreshold}</span></div>
       <div class="learn-row"><span>Intervalle att.</span><span class="learn-val">${Math.round(p.attackInterval)}s</span></div>
       <div class="learn-row"><span>Cible</span><span class="learn-val">${p.targetPriority.slice(0,4)}</span></div>
@@ -1425,6 +1499,31 @@ function updateHUD(){
       <div class="learn-row"><span>Harcèle.</span><span class="learn-val">${p.harassEarly?'✓':'✗'}</span></div>
     </div>`;
   }).join('');
+}
+
+function updateResourceGraph(){
+  const c=document.getElementById('resGraph'); if(!c) return;
+  const cx=c.getContext('2d'); const CW=c.width,CH=c.height;
+  cx.fillStyle='#050a0f'; cx.fillRect(0,0,CW,CH);
+  let maxM=200;
+  for(let fd of FACTION_DEFS) for(let pt of (resourceHistory[fd.id]||[])) if(pt.m>maxM) maxM=pt.m;
+  const P={l:2,r:2,t:3,b:3}, iW=CW-P.l-P.r, iH=CH-P.t-P.b;
+  cx.strokeStyle='#152535'; cx.lineWidth=1; cx.setLineDash([3,5]);
+  cx.beginPath(); cx.moveTo(P.l,P.t+iH*0.5); cx.lineTo(CW-P.r,P.t+iH*0.5); cx.stroke();
+  cx.setLineDash([]);
+  for(let fd of FACTION_DEFS){
+    const hist=resourceHistory[fd.id]||[]; if(hist.length<2) continue;
+    cx.strokeStyle=fd.color; cx.lineWidth=1.5; cx.globalAlpha=0.85;
+    cx.beginPath();
+    hist.forEach((pt,i)=>{
+      let x=P.l+iW*(i/(hist.length-1));
+      let y=P.t+iH*(1-Math.min(pt.m/maxM,1));
+      i===0?cx.moveTo(x,y):cx.lineTo(x,y);
+    });
+    cx.stroke(); cx.globalAlpha=1;
+  }
+  cx.font='8px Share Tech Mono'; cx.textAlign='left'; cx.fillStyle='#2a4a6a';
+  cx.fillText('💎 '+Math.round(maxM),P.l+1,P.t+8);
 }
 
 function log(msg,fid){
@@ -1743,7 +1842,7 @@ function startSimulation(totalGames){
       agent.totalGames++; if(place===0) agent.wins++;
       agent.history.push({place:place+1,survivalTime:f.eliminatedAt||gameTime,resourcesGathered:st.resourcesGathered,killCount:st.killCount,lossCount:st.lossCount});
       if(agent.history.length>10) agent.history.shift();
-      adaptParams(fd.id,agent,place);
+      adaptParams(fd.id,agent,place,ranking);
     });
     if(winnerId){
       let wname=factions[winnerId]?.name||winnerId;
