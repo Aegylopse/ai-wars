@@ -2,13 +2,13 @@
 
 ## Unités
 
-| Nom | Bâtiment producteur | Dégâts | Vitesse d'attaque | Blindé | Points de vie | Capacités spéciales |
-|---|---|---|---|---|---|---|
-| Worker | QG | 3 | ~1,1 s / attaque | Non | 40 | Récolte minéraux et vespène |
-| Marine | Barracks | 12 | ~0,85 s / attaque | Non | 50 | **Stimulant** (×1,5 vitesse & att. pendant 15 s, coûte 33 % des PV actuels) ; **Kiting** (recul automatique après chaque tir) |
-| Marauder | Barracks | 20 | ~1,35 s / attaque | Oui | 80 | **Stimulant** (×1,5 vitesse & att. pendant 15 s, coûte 33 % des PV actuels) |
-| Tank | Factory | 20 (mobile) / 45 (siège, AOE r=30 px) | ~0,85 s (mobile) / 1,8 s (siège) | Non | 220 | **Mode siège** : dégâts en zone, portée étendue ; ne bat pas en retraite sous PV critiques |
-| Medivac | Starport | — | — | Non | 120 | Soigne les alliés (40 PV/s) ; embarque les unités < 18 % PV pour les rapatrier au QG |
+| Nom | Bâtiment producteur | Dégâts | Vitesse d'attaque | Portée | Blindé | Points de vie | Capacités spéciales |
+|---|---|---|---|---|---|---|---|
+| Worker | QG | 3 | ~1,1 s / attaque | 15 | Non | 40 | Récolte minéraux et vespène |
+| Marine | Barracks | 12 | ~0,85 s / attaque | 35 | Non | 50 | **Stimulant** (×1,5 vitesse & att. pendant 15 s, coûte 33 % des PV actuels) ; **Kiting** (recul automatique après chaque tir) |
+| Marauder | Barracks | 20 | ~1,35 s / attaque | 38 | Oui | 80 | **Stimulant** (×1,5 vitesse & att. pendant 15 s, coûte 33 % des PV actuels) |
+| Tank | Factory | 20 (mobile) / 45 (siège, AOE r=30 px) | ~0,85 s (mobile) / 1,8 s (siège) | 55 (mobile) / 165 (siège) | Non | 220 | **Mode siège** : dégâts en zone, portée étendue ; ne bat pas en retraite sous PV critiques |
+| Medivac | Starport | — | — | 100 (soin) | Non | 120 | Soigne les alliés (40 PV/s) ; embarque les unités < 18 % PV pour les rapatrier au QG |
 
 ---
 
