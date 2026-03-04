@@ -558,23 +558,28 @@ function doMedivac(u, dt){
   const mt = UNIT_TYPES.medivac;
   if(u.energy === undefined) u.energy = mt.maxEnergy;
   if(!u.cargo) u.cargo = [];
+  if(!u.cargoMode) u.cargoMode = 'evacuate'; // 'evacuate' | 'flank'
+  if(u.flankTarget === undefined) u.flankTarget = null;
+  if(u.flankCooldown === undefined) u.flankCooldown = 0;
+  u.flankCooldown = Math.max(0, u.flankCooldown - dt);
 
   const allies = units.filter(v=>v.faction===u.faction && v!==u && v.type!=='medivac' && !v.inMedivac);
   const combatAllies = allies.filter(v=>v.type==='marine'||v.type==='marauder'||v.type==='tank');
   const hq = buildings.find(b=>b.faction===u.faction&&b.type==='hq'&&b.buildProgress>=1);
+  const enemies = visibleEnemyUnits(u.faction);
 
-  // ── Soin du cargo en vol ──
+  // ── Cargo en vol : soigner + voler vers la destination ──
   if(u.cargo.length > 0){
     for(let c of u.cargo){
       c.hp = Math.min(c.maxHp, c.hp + mt.healRate * 2 * dt);
       u.energy = Math.max(0, u.energy - mt.energyDrain * 0.5 * dt);
     }
-    // Retour au HQ pour déposer
-    if(hq){
+
+    // Mode évacuation → retour au QG
+    if(u.cargoMode === 'evacuate' && hq){
       moveTo(u, hq.x, hq.y, dt);
       u.angle = Math.atan2(hq.y-u.y, hq.x-u.x);
       if(dist(u, hq) < 55){
-        // Drop : toutes les unités suffisamment soignées
         u.cargo = u.cargo.filter(c => {
           if(c.hp >= c.maxHp * 0.7){
             c.inMedivac = false;
@@ -589,28 +594,85 @@ function doMedivac(u, dt){
         });
       }
     }
+
+    // Mode flanking → voler vers le point de flanc et déposer
+    if(u.cargoMode === 'flank' && u.flankTarget){
+      moveTo(u, u.flankTarget.x, u.flankTarget.y, dt);
+      u.angle = Math.atan2(u.flankTarget.y-u.y, u.flankTarget.x-u.x);
+      if(dist(u, u.flankTarget) < 40){
+        for(let c of u.cargo){
+          c.inMedivac = false;
+          c.x = u.flankTarget.x + (Math.random()-0.5)*50;
+          c.y = u.flankTarget.y + (Math.random()-0.5)*50;
+          c.state = 'attack';
+          if(typeof particles !== 'undefined')
+            particles.push({x:c.x,y:c.y,vx:0,vy:-40,life:0.5,maxLife:0.5,color:'#ffaa00',type:'heal',size:4});
+        }
+        u.cargo = [];
+        u.flankTarget = null;
+        u.flankCooldown = 18; // attendre avant le prochain flanking
+      }
+    }
     return;
   }
 
-  // ── Pickup : embarquer un allié en état critique ──
+  // ── Évacuation prioritaire : blessés critiques (< 25% PV) ──
   if(u.cargo.length < mt.cargoMax && u.energy > 20){
     let critical = combatAllies
-      .filter(v => v.hp < v.maxHp * 0.18 && dist(u, v) < 28)
+      .filter(v => v.hp < v.maxHp * 0.25 && dist(u, v) < 40)
       .sort((a,b) => a.hp - b.hp);
     if(critical.length){
       let pickup = critical[0];
       pickup.inMedivac = true;
       u.cargo.push(pickup);
+      u.cargoMode = 'evacuate';
       if(typeof particles !== 'undefined')
         for(let i=0;i<6;i++) particles.push({x:pickup.x,y:pickup.y,vx:(Math.random()-0.5)*40,vy:-50-Math.random()*30,life:0.4,maxLife:0.4,color:'#00ff88',type:'heal',size:3});
     } else {
-      // Se rapprocher d'un critique éloigné si place disponible
-      let nearby = combatAllies.filter(v => v.hp < v.maxHp * 0.18).sort((a,b)=>dist(u,a)-dist(u,b));
-      if(nearby.length){
-        moveTo(u, nearby[0].x, nearby[0].y, dt);
-        u.angle = Math.atan2(nearby[0].y-u.y, nearby[0].x-u.x);
+      // Se rapprocher d'un critique éloigné
+      let nearbyCritical = combatAllies.filter(v=>v.hp<v.maxHp*0.25).sort((a,b)=>dist(u,a)-dist(u,b));
+      if(nearbyCritical.length && dist(u, nearbyCritical[0]) < 180){
+        moveTo(u, nearbyCritical[0].x, nearbyCritical[0].y, dt);
+        u.angle = Math.atan2(nearbyCritical[0].y-u.y, nearbyCritical[0].x-u.x);
         return;
       }
+    }
+  }
+
+  // ── Transport tactique : flanking / encerclement ──
+  if(u.flankCooldown <= 0 && u.cargo.length === 0 && enemies.length >= 3 && combatAllies.length >= 5){
+    // Centres de gravité des deux camps
+    let ownCx = combatAllies.reduce((s,v)=>s+v.x,0)/combatAllies.length;
+    let ownCy = combatAllies.reduce((s,v)=>s+v.y,0)/combatAllies.length;
+    let enCx  = enemies.reduce((s,v)=>s+v.x,0)/enemies.length;
+    let enCy  = enemies.reduce((s,v)=>s+v.y,0)/enemies.length;
+    // Vecteur de notre force vers l'ennemi
+    let dx = enCx - ownCx, dy = enCy - ownCy;
+    let len = Math.hypot(dx,dy) || 1;
+    // Point de flanc : perpendiculaire au vecteur d'attaque, côté le plus dégagé
+    let f1 = {x: enCx + (-dy/len)*90, y: enCy + ( dx/len)*90};
+    let f2 = {x: enCx + ( dy/len)*90, y: enCy + (-dx/len)*90};
+    // Compter les ennemis proches de chaque flanc — choisir le moins défendu
+    let e1 = enemies.filter(v=>Math.hypot(v.x-f1.x,v.y-f1.y)<70).length;
+    let e2 = enemies.filter(v=>Math.hypot(v.x-f2.x,v.y-f2.y)<70).length;
+    let flankPt = e1 <= e2 ? f1 : f2;
+    flankPt.x = Math.max(30, Math.min(W-30, flankPt.x));
+    flankPt.y = Math.max(30, Math.min(H-30, flankPt.y));
+    // Embarquer 2-3 marines/marauders proches et en bonne santé
+    let candidates = combatAllies
+      .filter(v=>(v.type==='marine'||v.type==='marauder') && v.hp > v.maxHp*0.6 && dist(u,v) < 70)
+      .sort((a,b)=>dist(u,a)-dist(u,b))
+      .slice(0, 3);
+    if(candidates.length >= 2){
+      for(let c of candidates){
+        c.inMedivac = true;
+        u.cargo.push(c);
+        if(typeof particles !== 'undefined')
+          particles.push({x:c.x,y:c.y,vx:0,vy:-40,life:0.5,maxLife:0.5,color:'#ffaa00',type:'heal',size:4});
+      }
+      u.cargoMode = 'flank';
+      u.flankTarget = flankPt;
+      return;
     }
   }
 

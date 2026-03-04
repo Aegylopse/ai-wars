@@ -8,7 +8,7 @@
 | Marine | Barracks | 12 | ~0,85 s / attaque | 35 | Non | 50 | **Stimulant** (×1,5 vitesse & att. pendant 15 s, coûte 33 % des PV actuels) ; **Kiting** (recul automatique après chaque tir) |
 | Marauder | Barracks | 20 | ~1,35 s / attaque | 38 | Oui | 80 | **Stimulant** (×1,5 vitesse & att. pendant 15 s, coûte 33 % des PV actuels) |
 | Tank | Factory | 20 (mobile) / 45 (siège, AOE r=30 px) | ~0,85 s (mobile) / 1,8 s (siège) | 55 (mobile) / 165 (siège) | Non | 220 | **Mode siège** : dégâts en zone, portée étendue ; ne bat pas en retraite sous PV critiques |
-| Medivac | Starport | — | — | 100 (soin) | Non | 120 | Soigne les alliés (15 PV/s) ; embarque les unités < 18 % PV pour les rapatrier au QG |
+| Medivac | Starport | — | — | 100 (soin) | Non | 120 | Soigne les alliés (15 PV/s) ; **évacuation** des blessés critiques (< 25 % PV) vers le QG ; **transport tactique** (flanking / encerclement) : embarque 2-3 marines ou marauders en bonne santé et les dépose sur le flanc le moins défendu de l'ennemi |
 
 ---
 
