@@ -183,11 +183,13 @@ let fpsCount=0, fpsTimer=0, fpsCur=60, animFrame;
 let resourceHistory={}, lastResourceSample=0;
 
 const UNIT_TYPES = {
-  worker:   {hp:40,  speed:0.6,  attack:3,  range:15, size:4},
-  marine:   {hp:50,  speed:0.9,  attack:12, range:35, size:5},
+  worker:   {hp:40,  speed:0.6,  attack:3,  range:5,  size:4},
+  marine:   {hp:50,  speed:0.9,  attack:12, range:35, size:5, light:true},
   marauder: {hp:80,  speed:0.7,  attack:20, range:38, size:6, armored:true},
   tank:     {hp:220, speed:0.45, attack:20, siegeAttack:45, range:55, size:7},
-  medivac:  {hp:120, speed:1.1,  attack:0,  range:100, size:6, healRate:15, cargoMax:4, maxEnergy:100, energyDrain:20, energyRegen:10},
+  medivac:  {hp:120, speed:1.1,  attack:0,  range:100, size:6, healRate:15, cargoMax:4, maxEnergy:100, energyDrain:20, energyRegen:10, light:true},
+  viking:   {hp:80,  speed:0.65, airSpeed:1.05, attack:14, airAttack:18, range:35, size:5},
+  hellion:  {hp:90,  speed:1.2,  attack:8,  range:28, size:5, lightBonus:2},
 };
 const BUILDING_TYPES = {
   hq:        {hp:600, size:28, cost:0,   costVespene:0,  label:'HQ' },
@@ -366,8 +368,13 @@ function updateGame(dt) {
     if(b.type==='factory'){
       b.spawnTimer-=dt;
       if(b.spawnTimer<=0){
-        let t=myUnits(b.faction).filter(u=>u.type==='tank').length;
-        if(t<6&&f.resources>=150&&f.vespene>=100){f.resources-=150;f.vespene-=100;units.push(makeUnit(b.faction,'tank',b.x+(Math.random()-0.5)*30,b.y+(Math.random()-0.5)*30));b.spawnTimer=22;}
+        let vt=myUnits(b.faction).filter(u=>u.type==='tank').length;
+        let vh=myUnits(b.faction).filter(u=>u.type==='hellion').length;
+        let enemyLight=visibleEnemyUnits(b.faction).filter(v=>UNIT_TYPES[v.type]?.light&&!isAirUnit(v)).length;
+        // Décision IA : hélions si beaucoup d'unités légères ennemies ou déséquilibre, tanks sinon
+        let buildHellion = vh<4 && (enemyLight>3 || vh<vt);
+        if(buildHellion&&f.resources>=100){f.resources-=100;units.push(makeUnit(b.faction,'hellion',b.x+(Math.random()-0.5)*30,b.y+(Math.random()-0.5)*30));b.spawnTimer=15;}
+        else if(vt<6&&f.resources>=150&&f.vespene>=100){f.resources-=150;f.vespene-=100;units.push(makeUnit(b.faction,'tank',b.x+(Math.random()-0.5)*30,b.y+(Math.random()-0.5)*30));b.spawnTimer=22;}
         else b.spawnTimer=4;
       }
     }
@@ -375,7 +382,27 @@ function updateGame(dt) {
       b.spawnTimer-=dt;
       if(b.spawnTimer<=0){
         let mv=myUnits(b.faction).filter(u=>u.type==='medivac').length;
-        if(mv<3&&f.resources>=100&&f.vespene>=100){f.resources-=100;f.vespene-=100;units.push(makeUnit(b.faction,'medivac',b.x+(Math.random()-0.5)*30,b.y+(Math.random()-0.5)*30));b.spawnTimer=28;}
+        let vk=myUnits(b.faction).filter(u=>u.type==='viking').length;
+        let airThreats=visibleEnemyUnits(b.faction).filter(v=>isAirUnit(v)).length;
+        let groundForces=myUnits(b.faction).filter(u=>u.type==='marine'||u.type==='marauder'||u.type==='tank');
+        let avgHp=groundForces.length?groundForces.reduce((s,u)=>s+u.hp/u.maxHp,0)/groundForces.length:1;
+        // ── Décision IA : viking ou medivac ? ──
+        let buildViking=false, buildMedivac=false;
+        if(vk<3 && airThreats>vk){
+          buildViking=true;                        // menaces aériennes supérieures → anti-air urgent
+        } else if(mv===0){
+          buildMedivac=true;                       // aucun soignant → toujours en produire un
+        } else if(avgHp<0.65 && mv<3 && mv<=vk){
+          buildMedivac=true;                       // troupes au sol en mauvais état → plus de soin
+        } else if(vk<2 && airThreats>0 && vk<mv){
+          buildViking=true;                        // menaces aériennes présentes, rééquilibrer
+        } else if(mv<2){
+          buildMedivac=true;                       // soin par défaut si sous le cap
+        } else if(vk<2){
+          buildViking=true;                        // anti-air par défaut si sous le cap
+        }
+        if(buildViking&&f.resources>=100&&f.vespene>=75){f.resources-=100;f.vespene-=75;units.push(makeUnit(b.faction,'viking',b.x+(Math.random()-0.5)*30,b.y+(Math.random()-0.5)*30));b.spawnTimer=25;}
+        else if(buildMedivac&&f.resources>=100&&f.vespene>=100){f.resources-=100;f.vespene-=100;units.push(makeUnit(b.faction,'medivac',b.x+(Math.random()-0.5)*30,b.y+(Math.random()-0.5)*30));b.spawnTimer=28;}
         else b.spawnTimer=4;
       }
     }
@@ -395,6 +422,10 @@ function updateGame(dt) {
       else if(u.state==='build')   doBuild(u,dt);
     } else if(u.type==='medivac'){
       doMedivac(u,dt);
+    } else if(u.type==='viking'){
+      doViking(u,dt);
+    } else if(u.type==='hellion'){
+      doHellion(u,dt);
     } else {
       // Soldats & tanks : éclaireur ou combat
       if(u.state==='scout') doScout(u,dt);
@@ -428,7 +459,7 @@ function activeEnemyUnits(fid){return units.filter(v=>v.faction!==fid&&!factions
 function activeEnemyBuildings(fid){return buildings.filter(b=>b.faction!==fid&&b.buildProgress>=1&&!factions[b.faction]?.eliminated);}
 
 // ─── SYSTÈME DE VISION IA ─────────────────────────────────────────────────────
-const VISION_RADIUS = { worker:90, soldier:130, tank:160, hq:160, depot:100, barracks:110, factory:110, starport:110, medivac:140, turret:100 };
+const VISION_RADIUS = { worker:90, soldier:130, viking:140, tank:160, hq:160, depot:100, barracks:110, factory:110, starport:110, medivac:140, turret:100 };
 
 // Retourne tous les points de vision (x,y,r) d'une faction
 function getVisionCircles(fid){
@@ -709,6 +740,89 @@ function doMedivac(u, dt){
 }
 
 // ─── COMBAT ──────────────────────────────────────────────────────────────────
+function isAirUnit(u){ return u.type==='medivac' || (u.type==='viking' && u.vikingMode==='air'); }
+
+// ─── HÉLION ─────────────────────────────────────────────────────────────────
+function doHellion(u, dt){
+  // ── Retraite si PV critiques ──
+  const hpRatio = u.hp / u.maxHp;
+  if(hpRatio < 0.25){
+    let hq = buildings.find(b=>b.faction===u.faction&&b.type==='hq'&&b.buildProgress>=1);
+    if(hq){ u.state='retreat'; moveTo(u,hq.x,hq.y,dt); u.angle=Math.atan2(hq.y-u.y,hq.x-u.x); return; }
+  }
+  if(u.state==='retreat' && hpRatio>=0.6) u.state='attack';
+  if(u.state==='retreat'){
+    let hq=buildings.find(b=>b.faction===u.faction&&b.type==='hq'&&b.buildProgress>=1);
+    if(hq){ moveTo(u,hq.x,hq.y,dt); u.angle=Math.atan2(hq.y-u.y,hq.x-u.x); } return;
+  }
+  if(u.state==='scout'){ doScout(u,dt); return; }
+
+  let target = resolveTarget(u);
+  if(!target){
+    moveTo(u, W/2+(Math.random()-0.5)*100, H/2+(Math.random()-0.5)*100, dt);
+    u.state='attack'; return;
+  }
+  u.target = target.id; u.state = 'attack';
+  let d = dist(u, target);
+  u.angle = Math.atan2(target.y-u.y, target.x-u.x);
+
+  if(d > u.range){
+    u.x += Math.cos(u.angle) * u.speed * 60 * dt;
+    u.y += Math.sin(u.angle) * u.speed * 60 * dt;
+  } else if(u.attackCooldown <= 0){
+    // ── Lance-flamme en cône : tous les ennemis terrestres dans ±40° ──
+    const coneHalf = Math.PI / 4.5;
+    const coneTargets = activeEnemyUnits(u.faction).filter(v=>{
+      if(isAirUnit(v)||factions[v.faction]?.eliminated) return false;
+      let dv=dist(u,v); if(dv>u.range) return false;
+      let diff=Math.abs(((Math.atan2(v.y-u.y,v.x-u.x)-u.angle)+Math.PI*3)%(Math.PI*2)-Math.PI);
+      return diff<coneHalf;
+    });
+    const coneBuildings = activeEnemyBuildings(u.faction).filter(b=>{
+      let dv=dist(u,b); if(dv>u.range) return false;
+      let diff=Math.abs(((Math.atan2(b.y-u.y,b.x-u.x)-u.angle)+Math.PI*3)%(Math.PI*2)-Math.PI);
+      return diff<coneHalf;
+    });
+    for(let t of [...coneTargets,...coneBuildings]){
+      let dmg = u.attack * (UNIT_TYPES[t.type]?.light ? UNIT_TYPES.hellion.lightBonus : 1);
+      let died = damageEntity(t, dmg, u);
+      if(died && !t.hasOwnProperty('buildProgress')){ u.killCount++; factions[u.faction].stats.killCount++; }
+    }
+    // Flammes visuelles
+    if(typeof particles!=='undefined'){
+      for(let i=0;i<7;i++){
+        let a=u.angle+(Math.random()-0.5)*coneHalf*2;
+        particles.push({x:u.x+Math.cos(u.angle)*u.size,y:u.y+Math.sin(u.angle)*u.size,
+          vx:Math.cos(a)*(80+Math.random()*70),vy:Math.sin(a)*(80+Math.random()*70),
+          life:0.25+Math.random()*0.15,maxLife:0.4,
+          color:Math.random()<0.6?'#ff6600':'#ffcc00',type:'heal',size:3+Math.random()*3});
+      }
+    }
+    u.attackCooldown = 0.45 + Math.random()*0.2;
+  }
+}
+
+// ─── VIKING ─────────────────────────────────────────────────────────────────
+function doViking(u, dt){
+  const vt = UNIT_TYPES.viking;
+  if(!u.vikingMode)      u.vikingMode = 'ground';
+  if(!u.vikingModeTimer) u.vikingModeTimer = 0;
+  u.vikingModeTimer = Math.max(0, u.vikingModeTimer - dt);
+
+  if(u.vikingModeTimer <= 0){
+    const airEnemies    = visibleEnemyUnits(u.faction).filter(v => isAirUnit(v));
+    const groundEnemies = visibleEnemyUnits(u.faction).filter(v => !isAirUnit(v) && v.type !== 'worker');
+    // Passe en mode air si des cibles aériennes sont visibles ET pas de sol à portée immédiate
+    if(u.vikingMode === 'ground' && airEnemies.length > 0 && groundEnemies.length === 0){
+      u.vikingMode = 'air'; u.speed = vt.airSpeed; u.attack = vt.airAttack; u.vikingModeTimer = 3;
+    } else if(u.vikingMode === 'air' && (airEnemies.length === 0 || groundEnemies.length > 0)){
+      u.vikingMode = 'ground'; u.speed = vt.speed; u.attack = vt.attack; u.vikingModeTimer = 3;
+    }
+  }
+  if(u.state === 'scout') doScout(u, dt);
+  else doCombatUnit(u, dt);
+}
+
 // Logique combat unité militaire — NE PASSE JAMAIS À IDLE
 function doCombatUnit(u, dt) {
   // ── Décompte stimulant ──
@@ -843,8 +957,18 @@ function doCombatUnit(u, dt) {
 
 // Résoudre la cible d'une unité de combat
 function resolveTarget(u) {
+  // Filtrage du pool selon le type d'unité
+  let pool = visibleEnemyUnits(u.faction);
+  if(u.type === 'hellion'){
+    pool = pool.filter(v => !isAirUnit(v)); // terrestres uniquement
+  }
+  if(u.type === 'viking'){
+    pool = u.vikingMode === 'air'
+      ? pool.filter(v => isAirUnit(v))
+      : pool.filter(v => !isAirUnit(v));
+  }
   // 0. Cible opportuniste : ennemi visible à portée d'attaque (priorité absolue)
-  let immediate = findClosestInRange(visibleEnemyUnits(u.faction), u.x, u.y, u.range * 1.5);
+  let immediate = findClosestInRange(pool, u.x, u.y, u.range * 1.5);
   if(immediate) return immediate;
 
   // 1. Essayer la cible actuelle
@@ -864,6 +988,26 @@ function resolveTarget(u) {
 }
 
 function pickCombatTarget(u) {
+  if(u.type==='hellion'){
+    // Prioriser les unités légères (bonus dégâts)
+    let en = visibleEnemyUnits(u.faction).filter(v=>!isAirUnit(v));
+    let light = en.filter(v=>UNIT_TYPES[v.type]?.light);
+    if(light.length) return findClosest(light, u.x, u.y);
+    if(en.length) return findClosest(en, u.x, u.y);
+    let eb = visibleEnemyBuildings(u.faction);
+    return eb.length ? findClosest(eb, u.x, u.y) : null;
+  }
+  if(u.type==='viking'){
+    if(u.vikingMode==='air'){
+      let en = visibleEnemyUnits(u.faction).filter(v=>isAirUnit(v));
+      return en.length ? findClosest(en, u.x, u.y) : null;
+    } else {
+      let en = visibleEnemyUnits(u.faction).filter(v=>!isAirUnit(v)&&v.type!=='worker');
+      if(en.length) return findClosest(en, u.x, u.y);
+      let eb = visibleEnemyBuildings(u.faction);
+      return eb.length ? findClosest(eb, u.x, u.y) : null;
+    }
+  }
   if(u.type==='marine'||u.type==='marauder'||u.type==='tank'){
     let eb = visibleEnemyBuildings(u.faction);
     let hqs = eb.filter(b=>b.type==='hq');
@@ -1634,6 +1778,37 @@ function drawUnits(){
       if(u.stimActive){ ctx.shadowBlur=14; ctx.shadowColor='#fff'; }
       ctx.beginPath();ctx.moveTo(u.size,0);ctx.lineTo(-u.size/2,-u.size/2);ctx.lineTo(-u.size/2,u.size/2);ctx.closePath();ctx.fill();
       ctx.shadowBlur=0;
+    } else if(u.type==='hellion'){
+      // Buggy bas et large
+      ctx.beginPath(); ctx.rect(-u.size*1.3,-u.size*0.55,u.size*2.6,u.size*1.1); ctx.fill();
+      ctx.strokeStyle='rgba(255,140,0,0.55)'; ctx.lineWidth=1.5; ctx.stroke();
+      // Canon lance-flamme à l'avant
+      ctx.fillStyle='rgba(255,200,80,0.9)';
+      ctx.fillRect(u.size*0.9,-1.5,u.size*1.0,3);
+      ctx.shadowBlur=0;
+    } else if(u.type==='viking'){
+      if(u.vikingMode==='air'){
+        // Losange aérien
+        ctx.beginPath();
+        ctx.moveTo(0,-u.size*1.3); ctx.lineTo(u.size*1.1,0);
+        ctx.lineTo(0,u.size*1.3);  ctx.lineTo(-u.size*1.1,0);
+        ctx.closePath(); ctx.fill();
+        ctx.restore(); ctx.globalAlpha=1;
+        // Ombre au sol (indique l'altitude)
+        ctx.fillStyle='rgba(0,0,0,0.22)';
+        ctx.beginPath(); ctx.ellipse(u.x, u.y+u.size*2.5, u.size*1.1, u.size*0.4, 0, 0, Math.PI*2); ctx.fill();
+        // Badge mode air
+        ctx.fillStyle=col; ctx.font='bold 8px Share Tech Mono'; ctx.textAlign='center'; ctx.textBaseline='middle';
+        ctx.fillText('✈', u.x, u.y-u.size*1.3-6);
+        if(u.hp<u.maxHp){ctx.fillStyle='#300';ctx.fillRect(u.x-u.size,u.y-u.size-4,u.size*2,2);ctx.fillStyle='#0c0';ctx.fillRect(u.x-u.size,u.y-u.size-4,u.size*2*(u.hp/u.maxHp),2);}
+        continue;
+      } else {
+        // Pentagone sol
+        ctx.beginPath();
+        for(let i=0;i<5;i++){let a=(i/5)*Math.PI*2-Math.PI/2;i===0?ctx.moveTo(Math.cos(a)*u.size*1.1,Math.sin(a)*u.size*1.1):ctx.lineTo(Math.cos(a)*u.size*1.1,Math.sin(a)*u.size*1.1);}
+        ctx.closePath(); ctx.fill();
+        ctx.shadowBlur=0; ctx.strokeStyle='rgba(180,180,255,0.5)'; ctx.lineWidth=1.5; ctx.stroke();
+      }
     } else {
       // Tank
       ctx.fillRect(-u.size,-u.size/1.5,u.size*2,u.size*1.3);
@@ -2168,8 +2343,13 @@ function updateGameHeadless(dt){
     if(b.type==='factory'){
       b.spawnTimer-=dt;
       if(b.spawnTimer<=0){
-        let t=myUnits(b.faction).filter(u=>u.type==='tank').length;
-        if(t<6&&f.resources>=150&&f.vespene>=100){f.resources-=150;f.vespene-=100;units.push(makeUnit(b.faction,'tank',b.x+(Math.random()-0.5)*30,b.y+(Math.random()-0.5)*30));b.spawnTimer=22;}
+        let vt=myUnits(b.faction).filter(u=>u.type==='tank').length;
+        let vh=myUnits(b.faction).filter(u=>u.type==='hellion').length;
+        let enemyLight=visibleEnemyUnits(b.faction).filter(v=>UNIT_TYPES[v.type]?.light&&!isAirUnit(v)).length;
+        // Décision IA : hélions si beaucoup d'unités légères ennemies ou déséquilibre, tanks sinon
+        let buildHellion = vh<4 && (enemyLight>3 || vh<vt);
+        if(buildHellion&&f.resources>=100){f.resources-=100;units.push(makeUnit(b.faction,'hellion',b.x+(Math.random()-0.5)*30,b.y+(Math.random()-0.5)*30));b.spawnTimer=15;}
+        else if(vt<6&&f.resources>=150&&f.vespene>=100){f.resources-=150;f.vespene-=100;units.push(makeUnit(b.faction,'tank',b.x+(Math.random()-0.5)*30,b.y+(Math.random()-0.5)*30));b.spawnTimer=22;}
         else b.spawnTimer=4;
       }
     }
@@ -2177,7 +2357,27 @@ function updateGameHeadless(dt){
       b.spawnTimer-=dt;
       if(b.spawnTimer<=0){
         let mv=myUnits(b.faction).filter(u=>u.type==='medivac').length;
-        if(mv<3&&f.resources>=100&&f.vespene>=100){f.resources-=100;f.vespene-=100;units.push(makeUnit(b.faction,'medivac',b.x+(Math.random()-0.5)*30,b.y+(Math.random()-0.5)*30));b.spawnTimer=28;}
+        let vk=myUnits(b.faction).filter(u=>u.type==='viking').length;
+        let airThreats=visibleEnemyUnits(b.faction).filter(v=>isAirUnit(v)).length;
+        let groundForces=myUnits(b.faction).filter(u=>u.type==='marine'||u.type==='marauder'||u.type==='tank');
+        let avgHp=groundForces.length?groundForces.reduce((s,u)=>s+u.hp/u.maxHp,0)/groundForces.length:1;
+        // ── Décision IA : viking ou medivac ? ──
+        let buildViking=false, buildMedivac=false;
+        if(vk<3 && airThreats>vk){
+          buildViking=true;                        // menaces aériennes supérieures → anti-air urgent
+        } else if(mv===0){
+          buildMedivac=true;                       // aucun soignant → toujours en produire un
+        } else if(avgHp<0.65 && mv<3 && mv<=vk){
+          buildMedivac=true;                       // troupes au sol en mauvais état → plus de soin
+        } else if(vk<2 && airThreats>0 && vk<mv){
+          buildViking=true;                        // menaces aériennes présentes, rééquilibrer
+        } else if(mv<2){
+          buildMedivac=true;                       // soin par défaut si sous le cap
+        } else if(vk<2){
+          buildViking=true;                        // anti-air par défaut si sous le cap
+        }
+        if(buildViking&&f.resources>=100&&f.vespene>=75){f.resources-=100;f.vespene-=75;units.push(makeUnit(b.faction,'viking',b.x+(Math.random()-0.5)*30,b.y+(Math.random()-0.5)*30));b.spawnTimer=25;}
+        else if(buildMedivac&&f.resources>=100&&f.vespene>=100){f.resources-=100;f.vespene-=100;units.push(makeUnit(b.faction,'medivac',b.x+(Math.random()-0.5)*30,b.y+(Math.random()-0.5)*30));b.spawnTimer=28;}
         else b.spawnTimer=4;
       }
     }
@@ -2194,6 +2394,10 @@ function updateGameHeadless(dt){
       else if(u.state==='build') doBuild(u,dt);
     } else if(u.type==='medivac'){
       doMedivac(u,dt);
+    } else if(u.type==='viking'){
+      doViking(u,dt);
+    } else if(u.type==='hellion'){
+      doHellion(u,dt);
     } else {
       if(u.state==='scout') doScout(u,dt);
       else doCombatUnit(u,dt);
