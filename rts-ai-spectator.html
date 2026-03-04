@@ -270,14 +270,23 @@ function generateMap() {
     }
   });
 
-  // Defensive rock walls — placés EN DERNIER pour ne pas être effacés par le clearing
-  const wd=cl, wl=10;
+  // Defensive rock walls — placés EN DERNIER, longueur calculée pour ne pas atteindre les ressources
+  const wd=cl;
+  // Position des ressources de base (en tuiles depuis le coin)
+  const resCol = Math.floor(W*0.13/TILE);  // ex: col 10
+  const resRow = Math.floor(H*0.17/TILE);  // ex: row 7
+  const wlV = Math.max(2, resRow - 3);     // mur vertical s'arrête 3 tiles avant la ressource
+  const wlH = Math.max(2, resCol - 3);     // mur horizontal s'arrête 3 tiles avant la ressource
   function wallH(r,c0,c1){for(let c=c0;c<=c1;c++) for(let t=0;t<2;t++){let rr=r+t;if(rr>=0&&rr<ROWS&&c>=0&&c<COLS)map[rr][c]=1;}}
   function wallV(c,r0,r1){for(let r=r0;r<=r1;r++) for(let t=0;t<2;t++){let cc=c+t;if(r>=0&&r<ROWS&&cc>=0&&cc<COLS)map[r][cc]=1;}}
-  wallH(wd, 0, wl);              wallV(wd, 0, wl);
-  wallH(wd, COLS-1-wl, COLS-1); wallV(COLS-wd-2, 0, wl);
-  wallH(ROWS-wd-2, 0, wl);      wallV(wd, ROWS-1-wl, ROWS-1);
-  wallH(ROWS-wd-2, COLS-1-wl, COLS-1); wallV(COLS-wd-2, ROWS-1-wl, ROWS-1);
+  // Top-left
+  wallH(wd, 0, wlH);                     wallV(wd, 0, wlV);
+  // Top-right
+  wallH(wd, COLS-1-wlH, COLS-1);         wallV(COLS-wd-2, 0, wlV);
+  // Bottom-left
+  wallH(ROWS-wd-2, 0, wlH);              wallV(wd, ROWS-1-wlV, ROWS-1);
+  // Bottom-right
+  wallH(ROWS-wd-2, COLS-1-wlH, COLS-1); wallV(COLS-wd-2, ROWS-1-wlV, ROWS-1);
 }
 
 function spawnResources() {
