@@ -254,10 +254,10 @@ function generateMap() {
 
   // Clear all resource positions (rayon ±5 tiles) — AVANT les murs pour ne pas les effacer
   const rclears=[
-    {cx:Math.floor(W*0.13/TILE),cy:Math.floor(H*0.17/TILE)},
-    {cx:Math.floor(W*0.87/TILE),cy:Math.floor(H*0.17/TILE)},
-    {cx:Math.floor(W*0.87/TILE),cy:Math.floor(H*0.83/TILE)},
-    {cx:Math.floor(W*0.13/TILE),cy:Math.floor(H*0.83/TILE)},
+    {cx:Math.floor(W*0.08/TILE),cy:Math.floor(H*0.10/TILE)},
+    {cx:Math.floor(W*0.92/TILE),cy:Math.floor(H*0.10/TILE)},
+    {cx:Math.floor(W*0.92/TILE),cy:Math.floor(H*0.90/TILE)},
+    {cx:Math.floor(W*0.08/TILE),cy:Math.floor(H*0.90/TILE)},
     {cx:Math.floor(W*0.38/TILE),cy:Math.floor(H*0.35/TILE)},
     {cx:Math.floor(W*0.62/TILE),cy:Math.floor(H*0.35/TILE)},
     {cx:Math.floor(W*0.38/TILE),cy:Math.floor(H*0.65/TILE)},
@@ -276,16 +276,20 @@ function generateMap() {
 function spawnResources() {
   resources=[];
 
-  // ── Bases : arc de 6 minerais orienté vers le coin, vespène aux extrémités ──
-  const R=65; // rayon de l'arc
-  const mineralHalf = Math.PI*0.45; // demi-angle minerais (~81°)
-  const vespHalf    = Math.PI*0.60; // demi-angle vespène (~108°, aux extrémités)
-  function addR(x,y,type){ resources.push({x,y,amount:type==='mineral'?2000:1500,maxAmount:type==='mineral'?2000:1500,workerCount:0,type}); }
+  // ── Bases : arc de 6 minerais centré sur le HQ, orienté vers le coin ──
+  const R=60; // rayon de l'arc
+  const mineralHalf = Math.PI*0.58; // demi-angle minerais (~104°, total ~208°)
+  const vespHalf    = Math.PI*0.72; // demi-angle vespène (~130°, total ~259°)
+  function addR(x,y,type){
+    x=Math.max(12,Math.min(W-12,x));
+    y=Math.max(12,Math.min(H-12,y));
+    resources.push({x,y,amount:type==='mineral'?2000:1500,maxAmount:type==='mineral'?2000:1500,workerCount:0,type});
+  }
   const bases=[
-    {cx:W*0.13,cy:H*0.17,cornerX:0,  cornerY:0  },
-    {cx:W*0.87,cy:H*0.17,cornerX:W,  cornerY:0  },
-    {cx:W*0.87,cy:H*0.83,cornerX:W,  cornerY:H  },
-    {cx:W*0.13,cy:H*0.83,cornerX:0,  cornerY:H  },
+    {cx:W*0.08,cy:H*0.10,cornerX:0,  cornerY:0  },
+    {cx:W*0.92,cy:H*0.10,cornerX:W,  cornerY:0  },
+    {cx:W*0.92,cy:H*0.90,cornerX:W,  cornerY:H  },
+    {cx:W*0.08,cy:H*0.90,cornerX:0,  cornerY:H  },
   ];
   bases.forEach(({cx,cy,cornerX,cornerY})=>{
     const a=Math.atan2(cornerY-cy, cornerX-cx); // direction vers le coin
@@ -1003,7 +1007,7 @@ function doCombatUnit(u, dt) {
     if(isTank && d <= UNIT_TYPES.tank.range * 3){
       u.siegeMode = 'deploying'; u.siegeTimer = 2; return;
     }
-    moveUnit(u, u.angle, u.speed * (u.stimActive?1.5:1), dt);
+    moveTo(u, target.x, target.y, dt);
   } else {
     // ── Auto-stim à l'engagement ──
     if(!u.stimActive && factions[u.faction]?.stimResearched && (u.type==='marine'||u.type==='marauder') && u.hp > u.maxHp*0.4){
@@ -1249,25 +1253,33 @@ function aStar(x0,y0,x1,y1){
 function moveTo(u,tx,ty,dt){
   const dx0=tx-u.x,dy0=ty-u.y,d0=Math.hypot(dx0,dy0);
   if(d0<2) return;
+  const spd=u.speed*(u.stimActive?1.5:1);
   // Unités volantes : mouvement direct sans pathfinding
-  if(isAirUnit(u)){u.angle=Math.atan2(dy0,dx0);moveUnit(u,u.angle,u.speed,dt);return;}
+  if(isAirUnit(u)){u.angle=Math.atan2(dy0,dx0);moveUnit(u,u.angle,spd,dt);return;}
+  // Détection blocage : si l'unité n'a pas avancé de >1 tuile en 1s → forcer recalcul
+  u._stuckT=(u._stuckT||0)+dt;
+  if(u._stuckT>=1.0){
+    const moved=Math.hypot(u.x-(u._stuckX??u.x),u.y-(u._stuckY??u.y));
+    if(moved<TILE){u.path=[];u.pathTarget=null;}
+    u._stuckX=u.x;u._stuckY=u.y;u._stuckT=0;
+  }
   // Recomputer si destination changée ou timer expiré
   u.pathTimer=(u.pathTimer||0)-dt;
-  const destChanged=!u.pathTarget||Math.hypot(tx-u.pathTarget.x,ty-u.pathTarget.y)>TILE*2;
+  const destChanged=!u.pathTarget||Math.hypot(tx-u.pathTarget.x,ty-u.pathTarget.y)>TILE*3;
   if(destChanged||!u.path||u.path.length===0||u.pathTimer<=0){
     u.path=aStar(u.x,u.y,tx,ty)||[];
     u.pathTarget={x:tx,y:ty};
-    u.pathTimer=3;
+    u.pathTimer=2;
   }
-  // Avancer vers le prochain waypoint (supprimer ceux déjà atteints)
-  while(u.path.length>0&&Math.hypot(u.path[0].x-u.x,u.path[0].y-u.y)<TILE*0.7) u.path.shift();
+  // Avancer vers le prochain waypoint (seuil plus large pour éviter l'oscillation)
+  while(u.path.length>0&&Math.hypot(u.path[0].x-u.x,u.path[0].y-u.y)<TILE*1.2) u.path.shift();
   if(u.path.length>0){
     const wp=u.path[0];
     u.angle=Math.atan2(wp.y-u.y,wp.x-u.x);
   } else {
     u.angle=Math.atan2(dy0,dx0); // fallback direct
   }
-  moveUnit(u,u.angle,u.speed,dt);
+  moveUnit(u,u.angle,spd,dt);
 }
 
 // ─── DAMAGE ───────────────────────────────────────────────────────────────────
