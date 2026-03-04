@@ -241,7 +241,7 @@ function makeUnit(fid,type,x,y) {
     cargo:[],healCooldown:0,medState:'heal',dropTarget:null,
     energy: type==='medivac' ? UNIT_TYPES.medivac.maxEnergy : undefined,
     // Stimulant
-    stimActive: false, stimTimer: 0};
+    stimActive: false, stimTimer: 0, kiteTimer: 0, kiteAngle: 0};
 }
 function makeBuilding(fid,type,x,y) {
   const t=BUILDING_TYPES[type];
@@ -765,12 +765,15 @@ function doCombatUnit(u, dt) {
       spawnBullet(u.x, u.y, target.x, target.y, u.faction);
       let cd = u.type==='marauder' ? 1.2+Math.random()*0.3 : 0.7+Math.random()*0.35;
       u.attackCooldown = cd / (u.stimActive?1.5:1);
+      // Mémorise la direction de kite au moment du tir (évite les rotations dues aux changements de cible)
+      if(u.type==='marine'){ u.kiteTimer = 0.3; u.kiteAngle = Math.atan2(u.y - target.y, u.x - target.x); }
       if(died){ u.killCount++; factions[u.faction].stats.killCount++; }
-    } else if(u.type==='marine' && !u.stimActive && d < u.range * 0.75) {
-      // ── Kiting : recule entre les tirs pour maintenir la distance ──
-      let awayAngle = Math.atan2(u.y - target.y, u.x - target.x);
-      u.x += Math.cos(awayAngle) * u.speed * 60 * dt * 0.8;
-      u.y += Math.sin(awayAngle) * u.speed * 60 * dt * 0.8;
+    }
+    // ── Kiting : recule brièvement après chaque tir (direction fixe pendant 0.3s) ──
+    if(u.type==='marine' && u.kiteTimer > 0 && !target.buildProgress) {
+      u.kiteTimer = Math.max(0, u.kiteTimer - dt);
+      u.x += Math.cos(u.kiteAngle) * u.speed * 60 * dt * 0.8;
+      u.y += Math.sin(u.kiteAngle) * u.speed * 60 * dt * 0.8;
     }
     u.attackCooldown = Math.max(0, u.attackCooldown - dt);
   }
