@@ -252,32 +252,32 @@ function generateMap() {
     }
   });
 
-  // Defensive rock walls around each base (2 tiles thick, gap at inner corner)
-  const wd=cl, wl=10; // wall at tile cl from corner, length wl (gap = wd-wl = 4 tiles)
-  function wallH(r,c0,c1){for(let c=c0;c<=c1;c++) for(let t=0;t<2;t++){let rr=r+t;if(rr>=0&&rr<ROWS&&c>=0&&c<COLS)map[rr][c]=1;}}
-  function wallV(c,r0,r1){for(let r=r0;r<=r1;r++) for(let t=0;t<2;t++){let cc=c+t;if(r>=0&&r<ROWS&&cc>=0&&cc<COLS)map[r][cc]=1;}}
-  // Top-left base
-  wallH(wd, 0, wl);              wallV(wd, 0, wl);
-  // Top-right base
-  wallH(wd, COLS-1-wl, COLS-1); wallV(COLS-wd-2, 0, wl);
-  // Bottom-left base
-  wallH(ROWS-wd-2, 0, wl);      wallV(wd, ROWS-1-wl, ROWS-1);
-  // Bottom-right base
-  wallH(ROWS-wd-2, COLS-1-wl, COLS-1); wallV(COLS-wd-2, ROWS-1-wl, ROWS-1);
-
-  // Clear central resource clusters (base corners already cleared above; only central ones need explicit clearing)
+  // Clear all resource positions (rayon ±5 tiles) — AVANT les murs pour ne pas les effacer
   const rclears=[
+    {cx:Math.floor(W*0.13/TILE),cy:Math.floor(H*0.17/TILE)},
+    {cx:Math.floor(W*0.87/TILE),cy:Math.floor(H*0.17/TILE)},
+    {cx:Math.floor(W*0.87/TILE),cy:Math.floor(H*0.83/TILE)},
+    {cx:Math.floor(W*0.13/TILE),cy:Math.floor(H*0.83/TILE)},
     {cx:Math.floor(W*0.38/TILE),cy:Math.floor(H*0.35/TILE)},
     {cx:Math.floor(W*0.62/TILE),cy:Math.floor(H*0.35/TILE)},
     {cx:Math.floor(W*0.38/TILE),cy:Math.floor(H*0.65/TILE)},
     {cx:Math.floor(W*0.62/TILE),cy:Math.floor(H*0.65/TILE)},
   ];
   rclears.forEach(({cx,cy})=>{
-    for(let dy=-3;dy<=4;dy++) for(let dx=-3;dx<=3;dx++){
+    for(let dy=-5;dy<=6;dy++) for(let dx=-5;dx<=5;dx++){
       let ny=cy+dy,nx=cx+dx;
       if(ny>=0&&ny<ROWS&&nx>=0&&nx<COLS) map[ny][nx]=0;
     }
   });
+
+  // Defensive rock walls — placés EN DERNIER pour ne pas être effacés par le clearing
+  const wd=cl, wl=10;
+  function wallH(r,c0,c1){for(let c=c0;c<=c1;c++) for(let t=0;t<2;t++){let rr=r+t;if(rr>=0&&rr<ROWS&&c>=0&&c<COLS)map[rr][c]=1;}}
+  function wallV(c,r0,r1){for(let r=r0;r<=r1;r++) for(let t=0;t<2;t++){let cc=c+t;if(r>=0&&r<ROWS&&cc>=0&&cc<COLS)map[r][cc]=1;}}
+  wallH(wd, 0, wl);              wallV(wd, 0, wl);
+  wallH(wd, COLS-1-wl, COLS-1); wallV(COLS-wd-2, 0, wl);
+  wallH(ROWS-wd-2, 0, wl);      wallV(wd, ROWS-1-wl, ROWS-1);
+  wallH(ROWS-wd-2, COLS-1-wl, COLS-1); wallV(COLS-wd-2, ROWS-1-wl, ROWS-1);
 }
 
 function spawnResources() {
