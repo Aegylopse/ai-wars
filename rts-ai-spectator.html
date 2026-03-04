@@ -307,7 +307,8 @@ function makeUnit(fid,type,x,y) {
     cargo:[],healCooldown:0,medState:'heal',dropTarget:null,
     energy: type==='medivac' ? UNIT_TYPES.medivac.maxEnergy : undefined,
     // Stimulant
-    stimActive: false, stimTimer: 0, kiteTimer: 0, kiteAngle: 0};
+    stimActive: false, stimTimer: 0, kiteTimer: 0, kiteAngle: 0,
+    path:[], pathTarget:null, pathTimer:0};
 }
 function makeBuilding(fid,type,x,y) {
   const t=BUILDING_TYPES[type];
@@ -1175,11 +1176,87 @@ function moveUnit(u, angle, speed, dt) {
   else if(!tileBlocked(u.x,ny)){ u.y=ny; }   // slide Y
 }
 
-function moveTo(u,tx,ty,dt) {
-  let dx=tx-u.x,dy=ty-u.y,d=Math.hypot(dx,dy);
-  if(d<2) return;
-  u.angle=Math.atan2(dy,dx);
-  moveUnit(u, u.angle, u.speed, dt);
+// ─── PATHFINDING A* ───────────────────────────────────────────────────────────
+class MinHeap{
+  constructor(){this.d=[];}
+  push(v){this.d.push(v);this._up(this.d.length-1);}
+  pop(){const t=this.d[0],l=this.d.pop();if(this.d.length){this.d[0]=l;this._dn(0);}return t;}
+  get size(){return this.d.length;}
+  _up(i){while(i>0){const p=(i-1)>>1;if(this.d[p].f<=this.d[i].f)break;[this.d[p],this.d[i]]=[this.d[i],this.d[p]];i=p;}}
+  _dn(i){const n=this.d.length;for(;;){let m=i,l=2*i+1,r=l+1;if(l<n&&this.d[l].f<this.d[m].f)m=l;if(r<n&&this.d[r].f<this.d[m].f)m=r;if(m===i)break;[this.d[m],this.d[i]]=[this.d[i],this.d[m]];i=m;}}
+}
+
+function aStar(x0,y0,x1,y1){
+  const c0=Math.floor(x0/TILE),r0=Math.floor(y0/TILE);
+  let   c1=Math.floor(x1/TILE),r1=Math.floor(y1/TILE);
+  if(c0===c1&&r0===r1) return [];
+  // Si la tuile cible est bloquée, chercher la plus proche libre
+  if(r1>=0&&r1<ROWS&&c1>=0&&c1<COLS&&map[r1]&&map[r1][c1]===1){
+    let found=false;
+    outer:for(let rad=1;rad<=5;rad++)
+      for(let dr=-rad;dr<=rad;dr++)
+        for(let dc=-rad;dc<=rad;dc++)
+          if(Math.abs(dr)===rad||Math.abs(dc)===rad){
+            let nr=r1+dr,nc=c1+dc;
+            if(nr>=0&&nr<ROWS&&nc>=0&&nc<COLS&&map[nr]&&map[nr][nc]===0){r1=nr;c1=nc;found=true;break outer;}
+          }
+    if(!found) return null;
+  }
+  const key=(r,c)=>r*COLS+c;
+  const h=(r,c)=>Math.hypot(c-c1,r-r1);
+  const g=new Map(),from=new Map(),closed=new Set();
+  const heap=new MinHeap();
+  const sk=key(r0,c0); g.set(sk,0); heap.push({r:r0,c:c0,f:h(r0,c0)});
+  const DIRS=[[-1,0],[1,0],[0,-1],[0,1],[-1,-1],[-1,1],[1,-1],[1,1]];
+  const COSTS=[1,1,1,1,1.414,1.414,1.414,1.414];
+  let iters=0;
+  while(heap.size>0&&iters++<2000){
+    const {r,c}=heap.pop();
+    const ck=key(r,c);
+    if(r===r1&&c===c1){
+      const path=[];
+      let k=ck;
+      while(from.has(k)){const[pr,pc]=from.get(k);path.unshift({x:pc*TILE+TILE/2,y:pr*TILE+TILE/2});k=key(pr,pc);}
+      return path;
+    }
+    if(closed.has(ck)) continue;
+    closed.add(ck);
+    for(let i=0;i<8;i++){
+      const[dr,dc]=DIRS[i],nr=r+dr,nc=c+dc;
+      if(nr<0||nr>=ROWS||nc<0||nc>=COLS) continue;
+      if(!map[nr]||map[nr][nc]===1) continue;
+      if(dr!==0&&dc!==0&&(map[r][nc]===1||map[nr][c]===1)) continue; // no corner-cutting
+      const nk=key(nr,nc);
+      if(closed.has(nk)) continue;
+      const ng=(g.get(ck)||0)+COSTS[i];
+      if(ng<(g.get(nk)||Infinity)){g.set(nk,ng);from.set(nk,[r,c]);heap.push({r:nr,c:nc,f:ng+h(nr,nc)});}
+    }
+  }
+  return null;
+}
+
+function moveTo(u,tx,ty,dt){
+  const dx0=tx-u.x,dy0=ty-u.y,d0=Math.hypot(dx0,dy0);
+  if(d0<2) return;
+  // Unités volantes : mouvement direct sans pathfinding
+  if(isAirUnit(u)){u.angle=Math.atan2(dy0,dx0);moveUnit(u,u.angle,u.speed,dt);return;}
+  // Recomputer si destination changée ou timer expiré
+  u.pathTimer=(u.pathTimer||0)-dt;
+  const destChanged=!u.pathTarget||Math.hypot(tx-u.pathTarget.x,ty-u.pathTarget.y)>TILE*2;
+  if(destChanged||!u.path||u.path.length===0||u.pathTimer<=0){
+    u.path=aStar(u.x,u.y,tx,ty)||[];
+    u.pathTarget={x:tx,y:ty};
+    u.pathTimer=3;
+  }
+  // Avancer vers le prochain waypoint (supprimer ceux déjà atteints)
+  while(u.path.length>0&&Math.hypot(u.path[0].x-u.x,u.path[0].y-u.y)<TILE*0.7) u.path.shift();
+  if(u.path.length>0){
+    const wp=u.path[0];
+    u.angle=Math.atan2(wp.y-u.y,wp.x-u.x);
+  } else {
+    u.angle=Math.atan2(dy0,dx0); // fallback direct
+  }
+  moveUnit(u,u.angle,u.speed,dt);
 }
 
 // ─── DAMAGE ───────────────────────────────────────────────────────────────────
