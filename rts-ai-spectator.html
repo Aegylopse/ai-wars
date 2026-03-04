@@ -270,41 +270,43 @@ function generateMap() {
     }
   });
 
-  // Defensive rock walls — placés EN DERNIER, longueur calculée pour ne pas atteindre les ressources
-  const wd=cl;
-  // Position des ressources de base (en tuiles depuis le coin)
-  const resCol = Math.floor(W*0.13/TILE);  // ex: col 10
-  const resRow = Math.floor(H*0.17/TILE);  // ex: row 7
-  const wlV = Math.max(2, resRow - 3);     // mur vertical s'arrête 3 tiles avant la ressource
-  const wlH = Math.max(2, resCol - 3);     // mur horizontal s'arrête 3 tiles avant la ressource
-  function wallH(r,c0,c1){for(let c=c0;c<=c1;c++) for(let t=0;t<2;t++){let rr=r+t;if(rr>=0&&rr<ROWS&&c>=0&&c<COLS)map[rr][c]=1;}}
-  function wallV(c,r0,r1){for(let r=r0;r<=r1;r++) for(let t=0;t<2;t++){let cc=c+t;if(r>=0&&r<ROWS&&cc>=0&&cc<COLS)map[r][cc]=1;}}
-  // Top-left
-  wallH(wd, 0, wlH);                     wallV(wd, 0, wlV);
-  // Top-right
-  wallH(wd, COLS-1-wlH, COLS-1);         wallV(COLS-wd-2, 0, wlV);
-  // Bottom-left
-  wallH(ROWS-wd-2, 0, wlH);              wallV(wd, ROWS-1-wlV, ROWS-1);
-  // Bottom-right
-  wallH(ROWS-wd-2, COLS-1-wlH, COLS-1); wallV(COLS-wd-2, ROWS-1-wlV, ROWS-1);
+  // (pas de murs défensifs)
 }
 
 function spawnResources() {
   resources=[];
+
+  // ── Bases : arc de 6 minerais orienté vers le coin, vespène aux extrémités ──
+  const R=65; // rayon de l'arc
+  const mineralHalf = Math.PI*0.45; // demi-angle minerais (~81°)
+  const vespHalf    = Math.PI*0.60; // demi-angle vespène (~108°, aux extrémités)
+  function addR(x,y,type){ resources.push({x,y,amount:type==='mineral'?2000:1500,maxAmount:type==='mineral'?2000:1500,workerCount:0,type}); }
+  const bases=[
+    {cx:W*0.13,cy:H*0.17,cornerX:0,  cornerY:0  },
+    {cx:W*0.87,cy:H*0.17,cornerX:W,  cornerY:0  },
+    {cx:W*0.87,cy:H*0.83,cornerX:W,  cornerY:H  },
+    {cx:W*0.13,cy:H*0.83,cornerX:0,  cornerY:H  },
+  ];
+  bases.forEach(({cx,cy,cornerX,cornerY})=>{
+    const a=Math.atan2(cornerY-cy, cornerX-cx); // direction vers le coin
+    // 6 minerais en arc régulier
+    for(let i=0;i<6;i++){
+      const t=i/5;
+      const angle=a - mineralHalf + t*2*mineralHalf;
+      addR(cx+Math.cos(angle)*R, cy+Math.sin(angle)*R, 'mineral');
+    }
+    // vespène aux deux extrémités de l'arc
+    addR(cx+Math.cos(a-vespHalf)*R, cy+Math.sin(a-vespHalf)*R, 'vespene');
+    addR(cx+Math.cos(a+vespHalf)*R, cy+Math.sin(a+vespHalf)*R, 'vespene');
+  });
+
+  // ── Clusters centraux (inchangés) ──
   const S=20;
   const offs=[{dx:-S,dy:-S},{dx:S,dy:-S},{dx:-S,dy:0},{dx:S,dy:0},{dx:-S,dy:S},{dx:S,dy:S}];
-  const clusters=[
-    {cx:W*0.13,cy:H*0.17},{cx:W*0.87,cy:H*0.17}, // bases
-    {cx:W*0.87,cy:H*0.83},{cx:W*0.13,cy:H*0.83},
-    {cx:W*0.38,cy:H*0.35},{cx:W*0.62,cy:H*0.35}, // centre
-    {cx:W*0.38,cy:H*0.65},{cx:W*0.62,cy:H*0.65},
-  ];
-  clusters.forEach(c=>{
-    // 6 cristaux de minerais par cluster
-    offs.forEach(o=>resources.push({x:c.cx+o.dx,y:c.cy+o.dy,amount:2000,maxAmount:2000,workerCount:0,type:'mineral'}));
-    // 2 cristaux de vespène par cluster (au centre, légèrement décalés)
-    resources.push({x:c.cx-8,y:c.cy+30,amount:1500,maxAmount:1500,workerCount:0,type:'vespene'});
-    resources.push({x:c.cx+8,y:c.cy+30,amount:1500,maxAmount:1500,workerCount:0,type:'vespene'});
+  [{cx:W*0.38,cy:H*0.35},{cx:W*0.62,cy:H*0.35},{cx:W*0.38,cy:H*0.65},{cx:W*0.62,cy:H*0.65}]
+  .forEach(c=>{
+    offs.forEach(o=>addR(c.cx+o.dx,c.cy+o.dy,'mineral'));
+    addR(c.cx-8,c.cy+30,'vespene'); addR(c.cx+8,c.cy+30,'vespene');
   });
 }
 
