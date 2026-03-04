@@ -252,50 +252,61 @@ function generateMap() {
     }
   });
 
-  // Defensive rock walls around each base (2 tiles thick, gap at inner corner)
-  const wd=cl, wl=10; // wall at tile cl from corner, length wl (gap = wd-wl = 4 tiles)
-  function wallH(r,c0,c1){for(let c=c0;c<=c1;c++) for(let t=0;t<2;t++){let rr=r+t;if(rr>=0&&rr<ROWS&&c>=0&&c<COLS)map[rr][c]=1;}}
-  function wallV(c,r0,r1){for(let r=r0;r<=r1;r++) for(let t=0;t<2;t++){let cc=c+t;if(r>=0&&r<ROWS&&cc>=0&&cc<COLS)map[r][cc]=1;}}
-  // Top-left base
-  wallH(wd, 0, wl);              wallV(wd, 0, wl);
-  // Top-right base
-  wallH(wd, COLS-1-wl, COLS-1); wallV(COLS-wd-2, 0, wl);
-  // Bottom-left base
-  wallH(ROWS-wd-2, 0, wl);      wallV(wd, ROWS-1-wl, ROWS-1);
-  // Bottom-right base
-  wallH(ROWS-wd-2, COLS-1-wl, COLS-1); wallV(COLS-wd-2, ROWS-1-wl, ROWS-1);
-
-  // Clear central resource clusters (base corners already cleared above; only central ones need explicit clearing)
+  // Clear all resource positions (rayon ±5 tiles) — AVANT les murs pour ne pas les effacer
   const rclears=[
+    {cx:Math.floor(W*0.13/TILE),cy:Math.floor(H*0.17/TILE)},
+    {cx:Math.floor(W*0.87/TILE),cy:Math.floor(H*0.17/TILE)},
+    {cx:Math.floor(W*0.87/TILE),cy:Math.floor(H*0.83/TILE)},
+    {cx:Math.floor(W*0.13/TILE),cy:Math.floor(H*0.83/TILE)},
     {cx:Math.floor(W*0.38/TILE),cy:Math.floor(H*0.35/TILE)},
     {cx:Math.floor(W*0.62/TILE),cy:Math.floor(H*0.35/TILE)},
     {cx:Math.floor(W*0.38/TILE),cy:Math.floor(H*0.65/TILE)},
     {cx:Math.floor(W*0.62/TILE),cy:Math.floor(H*0.65/TILE)},
   ];
   rclears.forEach(({cx,cy})=>{
-    for(let dy=-3;dy<=4;dy++) for(let dx=-3;dx<=3;dx++){
+    for(let dy=-5;dy<=6;dy++) for(let dx=-5;dx<=5;dx++){
       let ny=cy+dy,nx=cx+dx;
       if(ny>=0&&ny<ROWS&&nx>=0&&nx<COLS) map[ny][nx]=0;
     }
   });
+
+  // (pas de murs défensifs)
 }
 
 function spawnResources() {
   resources=[];
+
+  // ── Bases : arc de 6 minerais orienté vers le coin, vespène aux extrémités ──
+  const R=65; // rayon de l'arc
+  const mineralHalf = Math.PI*0.45; // demi-angle minerais (~81°)
+  const vespHalf    = Math.PI*0.60; // demi-angle vespène (~108°, aux extrémités)
+  function addR(x,y,type){ resources.push({x,y,amount:type==='mineral'?2000:1500,maxAmount:type==='mineral'?2000:1500,workerCount:0,type}); }
+  const bases=[
+    {cx:W*0.13,cy:H*0.17,cornerX:0,  cornerY:0  },
+    {cx:W*0.87,cy:H*0.17,cornerX:W,  cornerY:0  },
+    {cx:W*0.87,cy:H*0.83,cornerX:W,  cornerY:H  },
+    {cx:W*0.13,cy:H*0.83,cornerX:0,  cornerY:H  },
+  ];
+  bases.forEach(({cx,cy,cornerX,cornerY})=>{
+    const a=Math.atan2(cornerY-cy, cornerX-cx); // direction vers le coin
+    // 6 minerais en arc régulier
+    for(let i=0;i<6;i++){
+      const t=i/5;
+      const angle=a - mineralHalf + t*2*mineralHalf;
+      addR(cx+Math.cos(angle)*R, cy+Math.sin(angle)*R, 'mineral');
+    }
+    // vespène aux deux extrémités de l'arc
+    addR(cx+Math.cos(a-vespHalf)*R, cy+Math.sin(a-vespHalf)*R, 'vespene');
+    addR(cx+Math.cos(a+vespHalf)*R, cy+Math.sin(a+vespHalf)*R, 'vespene');
+  });
+
+  // ── Clusters centraux (inchangés) ──
   const S=20;
   const offs=[{dx:-S,dy:-S},{dx:S,dy:-S},{dx:-S,dy:0},{dx:S,dy:0},{dx:-S,dy:S},{dx:S,dy:S}];
-  const clusters=[
-    {cx:W*0.13,cy:H*0.17},{cx:W*0.87,cy:H*0.17}, // bases
-    {cx:W*0.87,cy:H*0.83},{cx:W*0.13,cy:H*0.83},
-    {cx:W*0.38,cy:H*0.35},{cx:W*0.62,cy:H*0.35}, // centre
-    {cx:W*0.38,cy:H*0.65},{cx:W*0.62,cy:H*0.65},
-  ];
-  clusters.forEach(c=>{
-    // 6 cristaux de minerais par cluster
-    offs.forEach(o=>resources.push({x:c.cx+o.dx,y:c.cy+o.dy,amount:2000,maxAmount:2000,workerCount:0,type:'mineral'}));
-    // 2 cristaux de vespène par cluster (au centre, légèrement décalés)
-    resources.push({x:c.cx-8,y:c.cy+30,amount:1500,maxAmount:1500,workerCount:0,type:'vespene'});
-    resources.push({x:c.cx+8,y:c.cy+30,amount:1500,maxAmount:1500,workerCount:0,type:'vespene'});
+  [{cx:W*0.38,cy:H*0.35},{cx:W*0.62,cy:H*0.35},{cx:W*0.38,cy:H*0.65},{cx:W*0.62,cy:H*0.65}]
+  .forEach(c=>{
+    offs.forEach(o=>addR(c.cx+o.dx,c.cy+o.dy,'mineral'));
+    addR(c.cx-8,c.cy+30,'vespene'); addR(c.cx+8,c.cy+30,'vespene');
   });
 }
 
@@ -307,7 +318,8 @@ function makeUnit(fid,type,x,y) {
     cargo:[],healCooldown:0,medState:'heal',dropTarget:null,
     energy: type==='medivac' ? UNIT_TYPES.medivac.maxEnergy : undefined,
     // Stimulant
-    stimActive: false, stimTimer: 0, kiteTimer: 0, kiteAngle: 0};
+    stimActive: false, stimTimer: 0, kiteTimer: 0, kiteAngle: 0,
+    path:[], pathTarget:null, pathTimer:0};
 }
 function makeBuilding(fid,type,x,y) {
   const t=BUILDING_TYPES[type];
@@ -831,8 +843,7 @@ function doHellion(u, dt){
   u.angle = Math.atan2(target.y-u.y, target.x-u.x);
 
   if(d > u.range){
-    u.x += Math.cos(u.angle) * u.speed * 60 * dt;
-    u.y += Math.sin(u.angle) * u.speed * 60 * dt;
+    moveUnit(u, u.angle, u.speed, dt);
   } else if(u.attackCooldown <= 0){
     // ── Lance-flamme en cône : tous les ennemis terrestres dans ±40° ──
     const coneHalf = Math.PI / 4.5;
@@ -992,8 +1003,7 @@ function doCombatUnit(u, dt) {
     if(isTank && d <= UNIT_TYPES.tank.range * 3){
       u.siegeMode = 'deploying'; u.siegeTimer = 2; return;
     }
-    u.x += Math.cos(u.angle) * u.speed * (u.stimActive?1.5:1) * 60 * dt;
-    u.y += Math.sin(u.angle) * u.speed * (u.stimActive?1.5:1) * 60 * dt;
+    moveUnit(u, u.angle, u.speed * (u.stimActive?1.5:1), dt);
   } else {
     // ── Auto-stim à l'engagement ──
     if(!u.stimActive && factions[u.faction]?.stimResearched && (u.type==='marine'||u.type==='marauder') && u.hp > u.maxHp*0.4){
@@ -1012,8 +1022,7 @@ function doCombatUnit(u, dt) {
     // ── Kiting : recule brièvement après chaque tir (direction fixe pendant 0.3s) ──
     if(u.type==='marine' && u.kiteTimer > 0 && !target.buildProgress) {
       u.kiteTimer = Math.max(0, u.kiteTimer - dt);
-      u.x += Math.cos(u.kiteAngle) * u.speed * 60 * dt * 0.8;
-      u.y += Math.sin(u.kiteAngle) * u.speed * 60 * dt * 0.8;
+      moveUnit(u, u.kiteAngle, u.speed * 0.8, dt);
     }
     u.attackCooldown = Math.max(0, u.attackCooldown - dt);
   }
@@ -1140,8 +1149,7 @@ function doAttack(u,dt) {
   let d = dist(u, target);
   u.angle = Math.atan2(target.y-u.y, target.x-u.x);
   if(d > u.range){
-    u.x += Math.cos(u.angle)*u.speed*60*dt;
-    u.y += Math.sin(u.angle)*u.speed*60*dt;
+    moveUnit(u, u.angle, u.speed, dt);
   } else {
     if(u.attackCooldown<=0){
       let died = damageEntity(target, u.attack, u);
@@ -1167,17 +1175,99 @@ function tileBlocked(px,py){
   return row>=0&&row<ROWS&&col>=0&&col<COLS&&map[row]&&map[row][col]===1;
 }
 
-function moveTo(u,tx,ty,dt) {
-  let dx=tx-u.x,dy=ty-u.y,d=Math.hypot(dx,dy);
-  if(d<2) return;
-  u.angle=Math.atan2(dy,dx);
-  let step=u.speed*60*dt;
-  let nx=u.x+(dx/d)*step, ny=u.y+(dy/d)*step;
-  // Escape if already stuck inside a tile
-  if(tileBlocked(u.x,u.y)){u.x=nx;u.y=ny;return;}
-  if(!tileBlocked(nx,ny)){u.x=nx;u.y=ny;}
-  else if(!tileBlocked(nx,u.y)){u.x=nx;}   // slide along X
-  else if(!tileBlocked(u.x,ny)){u.y=ny;}   // slide along Y
+// Déplace u dans la direction angle à la vitesse speed — les unités volantes ignorent les obstacles
+function moveUnit(u, angle, speed, dt) {
+  let step = speed * 60 * dt;
+  let cx = Math.cos(angle), cy = Math.sin(angle);
+  if(isAirUnit(u)){ u.x += cx*step; u.y += cy*step; return; }
+  let nx = u.x + cx*step, ny = u.y + cy*step;
+  if(tileBlocked(u.x,u.y)){ u.x=nx; u.y=ny; return; } // escape if stuck
+  if(!tileBlocked(nx,ny)){ u.x=nx; u.y=ny; }
+  else if(!tileBlocked(nx,u.y)){ u.x=nx; }   // slide X
+  else if(!tileBlocked(u.x,ny)){ u.y=ny; }   // slide Y
+}
+
+// ─── PATHFINDING A* ───────────────────────────────────────────────────────────
+class MinHeap{
+  constructor(){this.d=[];}
+  push(v){this.d.push(v);this._up(this.d.length-1);}
+  pop(){const t=this.d[0],l=this.d.pop();if(this.d.length){this.d[0]=l;this._dn(0);}return t;}
+  get size(){return this.d.length;}
+  _up(i){while(i>0){const p=(i-1)>>1;if(this.d[p].f<=this.d[i].f)break;[this.d[p],this.d[i]]=[this.d[i],this.d[p]];i=p;}}
+  _dn(i){const n=this.d.length;for(;;){let m=i,l=2*i+1,r=l+1;if(l<n&&this.d[l].f<this.d[m].f)m=l;if(r<n&&this.d[r].f<this.d[m].f)m=r;if(m===i)break;[this.d[m],this.d[i]]=[this.d[i],this.d[m]];i=m;}}
+}
+
+function aStar(x0,y0,x1,y1){
+  const c0=Math.floor(x0/TILE),r0=Math.floor(y0/TILE);
+  let   c1=Math.floor(x1/TILE),r1=Math.floor(y1/TILE);
+  if(c0===c1&&r0===r1) return [];
+  // Si la tuile cible est bloquée, chercher la plus proche libre
+  if(r1>=0&&r1<ROWS&&c1>=0&&c1<COLS&&map[r1]&&map[r1][c1]===1){
+    let found=false;
+    outer:for(let rad=1;rad<=5;rad++)
+      for(let dr=-rad;dr<=rad;dr++)
+        for(let dc=-rad;dc<=rad;dc++)
+          if(Math.abs(dr)===rad||Math.abs(dc)===rad){
+            let nr=r1+dr,nc=c1+dc;
+            if(nr>=0&&nr<ROWS&&nc>=0&&nc<COLS&&map[nr]&&map[nr][nc]===0){r1=nr;c1=nc;found=true;break outer;}
+          }
+    if(!found) return null;
+  }
+  const key=(r,c)=>r*COLS+c;
+  const h=(r,c)=>Math.hypot(c-c1,r-r1);
+  const g=new Map(),from=new Map(),closed=new Set();
+  const heap=new MinHeap();
+  const sk=key(r0,c0); g.set(sk,0); heap.push({r:r0,c:c0,f:h(r0,c0)});
+  const DIRS=[[-1,0],[1,0],[0,-1],[0,1],[-1,-1],[-1,1],[1,-1],[1,1]];
+  const COSTS=[1,1,1,1,1.414,1.414,1.414,1.414];
+  let iters=0;
+  while(heap.size>0&&iters++<2000){
+    const {r,c}=heap.pop();
+    const ck=key(r,c);
+    if(r===r1&&c===c1){
+      const path=[];
+      let k=ck;
+      while(from.has(k)){const[pr,pc]=from.get(k);path.unshift({x:pc*TILE+TILE/2,y:pr*TILE+TILE/2});k=key(pr,pc);}
+      return path;
+    }
+    if(closed.has(ck)) continue;
+    closed.add(ck);
+    for(let i=0;i<8;i++){
+      const[dr,dc]=DIRS[i],nr=r+dr,nc=c+dc;
+      if(nr<0||nr>=ROWS||nc<0||nc>=COLS) continue;
+      if(!map[nr]||map[nr][nc]===1) continue;
+      if(dr!==0&&dc!==0&&(map[r][nc]===1||map[nr][c]===1)) continue; // no corner-cutting
+      const nk=key(nr,nc);
+      if(closed.has(nk)) continue;
+      const ng=(g.get(ck)||0)+COSTS[i];
+      if(ng<(g.get(nk)||Infinity)){g.set(nk,ng);from.set(nk,[r,c]);heap.push({r:nr,c:nc,f:ng+h(nr,nc)});}
+    }
+  }
+  return null;
+}
+
+function moveTo(u,tx,ty,dt){
+  const dx0=tx-u.x,dy0=ty-u.y,d0=Math.hypot(dx0,dy0);
+  if(d0<2) return;
+  // Unités volantes : mouvement direct sans pathfinding
+  if(isAirUnit(u)){u.angle=Math.atan2(dy0,dx0);moveUnit(u,u.angle,u.speed,dt);return;}
+  // Recomputer si destination changée ou timer expiré
+  u.pathTimer=(u.pathTimer||0)-dt;
+  const destChanged=!u.pathTarget||Math.hypot(tx-u.pathTarget.x,ty-u.pathTarget.y)>TILE*2;
+  if(destChanged||!u.path||u.path.length===0||u.pathTimer<=0){
+    u.path=aStar(u.x,u.y,tx,ty)||[];
+    u.pathTarget={x:tx,y:ty};
+    u.pathTimer=3;
+  }
+  // Avancer vers le prochain waypoint (supprimer ceux déjà atteints)
+  while(u.path.length>0&&Math.hypot(u.path[0].x-u.x,u.path[0].y-u.y)<TILE*0.7) u.path.shift();
+  if(u.path.length>0){
+    const wp=u.path[0];
+    u.angle=Math.atan2(wp.y-u.y,wp.x-u.x);
+  } else {
+    u.angle=Math.atan2(dy0,dx0); // fallback direct
+  }
+  moveUnit(u,u.angle,u.speed,dt);
 }
 
 // ─── DAMAGE ───────────────────────────────────────────────────────────────────
