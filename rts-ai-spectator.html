@@ -53,8 +53,9 @@
     <button class="btn" id="fogBtn-ouest" onclick="setFogFaction('ouest')">OUEST</button>
     <span style="font-size:12px;color:#2a4a6a;margin-left:4px">SPEED</span>
     <button class="btn" onclick="setSpeed(0.5)">×½</button>
-    <button class="btn active" onclick="setSpeed(1)">×1</button>
+    <button class="btn" onclick="setSpeed(1)">×1</button>
     <button class="btn" onclick="setSpeed(2)">×2</button>
+    <button class="btn active" onclick="setSpeed(3)">×3</button>
     <button class="btn" onclick="setSpeed(4)">×4</button>
     <button class="btn" onclick="setSpeed(8)">×8</button>
     <button class="btn" onclick="forceEndGame()" style="margin-left:8px;border-color:#ff3a3a44;color:#ff3a3a88" onmouseover="this.style.borderColor='#ff3a3a';this.style.color='#ff3a3a'" onmouseout="this.style.borderColor='#ff3a3a44';this.style.color='#ff3a3a88'">■ FIN</button>
@@ -176,17 +177,19 @@ let W, H, COLS, ROWS;
 const TILE = 20;
 let map=[], resources=[], buildings=[], units=[], particles=[], battleLog=[];
 let factions={}, aiState={};
-let gameRunning=false, speed=1, gameTime=0, lastTime=0, uid=0;
+let gameRunning=false, speed=3, gameTime=0, lastTime=0, uid=0;
 let fogFaction=null; // null = vue globale (pas de brouillard)
 let fpsCount=0, fpsTimer=0, fpsCur=60, animFrame;
 let resourceHistory={}, lastResourceSample=0;
 
 const UNIT_TYPES = {
-  worker:   {hp:40,  speed:0.6,  attack:3,  range:15, size:4},
-  marine:   {hp:50,  speed:0.9,  attack:12, range:35, size:5},
+  worker:   {hp:40,  speed:0.6,  attack:3,  range:5,  size:4},
+  marine:   {hp:50,  speed:0.9,  attack:12, range:35, size:5, light:true},
   marauder: {hp:80,  speed:0.7,  attack:20, range:38, size:6, armored:true},
   tank:     {hp:220, speed:0.45, attack:20, siegeAttack:45, range:55, size:7},
-  medivac:  {hp:120, speed:1.1,  attack:0,  range:100, size:6, healRate:40, cargoMax:4, maxEnergy:100, energyDrain:20, energyRegen:10},
+  medivac:  {hp:120, speed:1.1,  attack:0,  range:100, size:6, healRate:15, cargoMax:4, maxEnergy:100, energyDrain:20, energyRegen:10, light:true},
+  viking:   {hp:80,  speed:0.65, airSpeed:1.05, attack:14, airAttack:18, range:35, size:5},
+  hellion:  {hp:90,  speed:1.2,  attack:8,  range:28, size:5, lightBonus:2},
 };
 const BUILDING_TYPES = {
   hq:        {hp:600, size:28, cost:0,   costVespene:0,  label:'HQ' },
@@ -206,10 +209,74 @@ function resize() {
 
 function generateMap() {
   map=[];
-  for(let y=0;y<ROWS;y++){map[y]=[];for(let x=0;x<COLS;x++)map[y][x]=Math.random()<0.025?1:0;}
-  // Dégager les coins pour les bases
-  [[0,0],[COLS-8,0],[0,ROWS-8],[COLS-8,ROWS-8]].forEach(([cx,cy])=>{
-    for(let dy=0;dy<10;dy++)for(let dx=0;dx<10;dx++){let y=cy+dy,x=cx+dx;if(map[y])map[y][x]=0;}
+  for(let y=0;y<ROWS;y++){map[y]=[];for(let x=0;x<COLS;x++)map[y][x]=0;}
+
+  // Place organic rock clusters via random walk seeding
+  function placeCluster(cx,cy,size){
+    let cells=[{x:Math.round(cx),y:Math.round(cy)}];
+    if(map[Math.round(cy)]&&Math.round(cx)>=0&&Math.round(cx)<COLS) map[Math.round(cy)][Math.round(cx)]=1;
+    for(let i=0;i<size;i++){
+      let s=cells[Math.floor(Math.random()*cells.length)];
+      let dx=Math.floor(Math.random()*3)-1, dy=Math.floor(Math.random()*3)-1;
+      let nx=s.x+dx, ny=s.y+dy;
+      if(ny>=0&&ny<ROWS&&nx>=0&&nx<COLS&&!map[ny][nx]){
+        map[ny][nx]=1; cells.push({x:nx,y:ny});
+      }
+    }
+  }
+
+  const midX=Math.floor(COLS/2), midY=Math.floor(ROWS/2);
+
+  // Central large formation
+  placeCluster(midX, midY, 60);
+
+  // Mid-lane clusters (symmetric)
+  placeCluster(midX-Math.floor(COLS*0.18), midY, 28);
+  placeCluster(midX+Math.floor(COLS*0.18), midY, 28);
+  placeCluster(midX, midY-Math.floor(ROWS*0.18), 28);
+  placeCluster(midX, midY+Math.floor(ROWS*0.18), 28);
+
+  // Diagonal accent clusters (offset from resource positions)
+  placeCluster(midX-Math.floor(COLS*0.09), midY-Math.floor(ROWS*0.26), 15);
+  placeCluster(midX+Math.floor(COLS*0.09), midY-Math.floor(ROWS*0.26), 15);
+  placeCluster(midX-Math.floor(COLS*0.09), midY+Math.floor(ROWS*0.26), 15);
+  placeCluster(midX+Math.floor(COLS*0.09), midY+Math.floor(ROWS*0.26), 15);
+
+  // Clear base corners (14×14 tiles from each corner)
+  const cl=14;
+  [[0,0],[COLS-1,0],[0,ROWS-1],[COLS-1,ROWS-1]].forEach(([bx,by])=>{
+    const sx=bx===0?1:-1, sy=by===0?1:-1;
+    for(let dy=0;dy<cl;dy++) for(let dx=0;dx<cl;dx++){
+      let y=by+sy*dy, x=bx+sx*dx;
+      if(y>=0&&y<ROWS&&x>=0&&x<COLS) map[y][x]=0;
+    }
+  });
+
+  // Defensive rock walls around each base (2 tiles thick, gap at inner corner)
+  const wd=cl, wl=10; // wall at tile cl from corner, length wl (gap = wd-wl = 4 tiles)
+  function wallH(r,c0,c1){for(let c=c0;c<=c1;c++) for(let t=0;t<2;t++){let rr=r+t;if(rr>=0&&rr<ROWS&&c>=0&&c<COLS)map[rr][c]=1;}}
+  function wallV(c,r0,r1){for(let r=r0;r<=r1;r++) for(let t=0;t<2;t++){let cc=c+t;if(r>=0&&r<ROWS&&cc>=0&&cc<COLS)map[r][cc]=1;}}
+  // Top-left base
+  wallH(wd, 0, wl);              wallV(wd, 0, wl);
+  // Top-right base
+  wallH(wd, COLS-1-wl, COLS-1); wallV(COLS-wd-2, 0, wl);
+  // Bottom-left base
+  wallH(ROWS-wd-2, 0, wl);      wallV(wd, ROWS-1-wl, ROWS-1);
+  // Bottom-right base
+  wallH(ROWS-wd-2, COLS-1-wl, COLS-1); wallV(COLS-wd-2, ROWS-1-wl, ROWS-1);
+
+  // Clear central resource clusters (base corners already cleared above; only central ones need explicit clearing)
+  const rclears=[
+    {cx:Math.floor(W*0.38/TILE),cy:Math.floor(H*0.35/TILE)},
+    {cx:Math.floor(W*0.62/TILE),cy:Math.floor(H*0.35/TILE)},
+    {cx:Math.floor(W*0.38/TILE),cy:Math.floor(H*0.65/TILE)},
+    {cx:Math.floor(W*0.62/TILE),cy:Math.floor(H*0.65/TILE)},
+  ];
+  rclears.forEach(({cx,cy})=>{
+    for(let dy=-3;dy<=4;dy++) for(let dx=-3;dx<=3;dx++){
+      let ny=cy+dy,nx=cx+dx;
+      if(ny>=0&&ny<ROWS&&nx>=0&&nx<COLS) map[ny][nx]=0;
+    }
   });
 }
 
@@ -240,7 +307,7 @@ function makeUnit(fid,type,x,y) {
     cargo:[],healCooldown:0,medState:'heal',dropTarget:null,
     energy: type==='medivac' ? UNIT_TYPES.medivac.maxEnergy : undefined,
     // Stimulant
-    stimActive: false, stimTimer: 0};
+    stimActive: false, stimTimer: 0, kiteTimer: 0, kiteAngle: 0};
 }
 function makeBuilding(fid,type,x,y) {
   const t=BUILDING_TYPES[type];
@@ -365,8 +432,13 @@ function updateGame(dt) {
     if(b.type==='factory'){
       b.spawnTimer-=dt;
       if(b.spawnTimer<=0){
-        let t=myUnits(b.faction).filter(u=>u.type==='tank').length;
-        if(t<6&&f.resources>=150&&f.vespene>=100){f.resources-=150;f.vespene-=100;units.push(makeUnit(b.faction,'tank',b.x+(Math.random()-0.5)*30,b.y+(Math.random()-0.5)*30));b.spawnTimer=22;}
+        let vt=myUnits(b.faction).filter(u=>u.type==='tank').length;
+        let vh=myUnits(b.faction).filter(u=>u.type==='hellion').length;
+        let enemyLight=visibleEnemyUnits(b.faction).filter(v=>UNIT_TYPES[v.type]?.light&&!isAirUnit(v)).length;
+        // Décision IA : hélions si beaucoup d'unités légères ennemies ou déséquilibre, tanks sinon
+        let buildHellion = vh<4 && (enemyLight>3 || vh<vt);
+        if(buildHellion&&f.resources>=100){f.resources-=100;units.push(makeUnit(b.faction,'hellion',b.x+(Math.random()-0.5)*30,b.y+(Math.random()-0.5)*30));b.spawnTimer=15;}
+        else if(vt<6&&f.resources>=150&&f.vespene>=100){f.resources-=150;f.vespene-=100;units.push(makeUnit(b.faction,'tank',b.x+(Math.random()-0.5)*30,b.y+(Math.random()-0.5)*30));b.spawnTimer=22;}
         else b.spawnTimer=4;
       }
     }
@@ -374,7 +446,27 @@ function updateGame(dt) {
       b.spawnTimer-=dt;
       if(b.spawnTimer<=0){
         let mv=myUnits(b.faction).filter(u=>u.type==='medivac').length;
-        if(mv<3&&f.resources>=100&&f.vespene>=100){f.resources-=100;f.vespene-=100;units.push(makeUnit(b.faction,'medivac',b.x+(Math.random()-0.5)*30,b.y+(Math.random()-0.5)*30));b.spawnTimer=28;}
+        let vk=myUnits(b.faction).filter(u=>u.type==='viking').length;
+        let airThreats=visibleEnemyUnits(b.faction).filter(v=>isAirUnit(v)).length;
+        let groundForces=myUnits(b.faction).filter(u=>u.type==='marine'||u.type==='marauder'||u.type==='tank');
+        let avgHp=groundForces.length?groundForces.reduce((s,u)=>s+u.hp/u.maxHp,0)/groundForces.length:1;
+        // ── Décision IA : viking ou medivac ? ──
+        let buildViking=false, buildMedivac=false;
+        if(vk<3 && airThreats>vk){
+          buildViking=true;                        // menaces aériennes supérieures → anti-air urgent
+        } else if(mv===0){
+          buildMedivac=true;                       // aucun soignant → toujours en produire un
+        } else if(avgHp<0.65 && mv<3 && mv<=vk){
+          buildMedivac=true;                       // troupes au sol en mauvais état → plus de soin
+        } else if(vk<2 && airThreats>0 && vk<mv){
+          buildViking=true;                        // menaces aériennes présentes, rééquilibrer
+        } else if(mv<2){
+          buildMedivac=true;                       // soin par défaut si sous le cap
+        } else if(vk<2){
+          buildViking=true;                        // anti-air par défaut si sous le cap
+        }
+        if(buildViking&&f.resources>=100&&f.vespene>=75){f.resources-=100;f.vespene-=75;units.push(makeUnit(b.faction,'viking',b.x+(Math.random()-0.5)*30,b.y+(Math.random()-0.5)*30));b.spawnTimer=25;}
+        else if(buildMedivac&&f.resources>=100&&f.vespene>=100){f.resources-=100;f.vespene-=100;units.push(makeUnit(b.faction,'medivac',b.x+(Math.random()-0.5)*30,b.y+(Math.random()-0.5)*30));b.spawnTimer=28;}
         else b.spawnTimer=4;
       }
     }
@@ -384,6 +476,7 @@ function updateGame(dt) {
   for(let i=units.length-1;i>=0;i--){
     let u=units[i];
     if(factions[u.faction]?.eliminated){units.splice(i,1);continue;}
+    if(u.inMedivac) continue; // unité embarquée dans un medivac
     u.attackCooldown=Math.max(0,u.attackCooldown-dt);
 
     if(u.type==='worker'){
@@ -393,6 +486,10 @@ function updateGame(dt) {
       else if(u.state==='build')   doBuild(u,dt);
     } else if(u.type==='medivac'){
       doMedivac(u,dt);
+    } else if(u.type==='viking'){
+      doViking(u,dt);
+    } else if(u.type==='hellion'){
+      doHellion(u,dt);
     } else {
       // Soldats & tanks : éclaireur ou combat
       if(u.state==='scout') doScout(u,dt);
@@ -426,7 +523,7 @@ function activeEnemyUnits(fid){return units.filter(v=>v.faction!==fid&&!factions
 function activeEnemyBuildings(fid){return buildings.filter(b=>b.faction!==fid&&b.buildProgress>=1&&!factions[b.faction]?.eliminated);}
 
 // ─── SYSTÈME DE VISION IA ─────────────────────────────────────────────────────
-const VISION_RADIUS = { worker:90, soldier:130, tank:160, hq:160, depot:100, barracks:110, factory:110, starport:110, medivac:140, turret:100 };
+const VISION_RADIUS = { worker:90, soldier:130, viking:140, tank:160, hq:160, depot:100, barracks:110, factory:110, starport:110, medivac:140, turret:100 };
 
 // Retourne tous les points de vision (x,y,r) d'une faction
 function getVisionCircles(fid){
@@ -553,65 +650,243 @@ function assignWorkerTask(u) {
 
 // ─── MÉDIVAC ─────────────────────────────────────────────────────────────────
 function doMedivac(u, dt){
-  const t = UNIT_TYPES.medivac;
-  const allies = units.filter(v=>v.faction===u.faction && v!==u && v.type!=='medivac' && !v.inMedivac);
-
-  // ── Soin continu des alliés blessés à portée (si énergie disponible) ──
   const mt = UNIT_TYPES.medivac;
   if(u.energy === undefined) u.energy = mt.maxEnergy;
+  if(!u.cargo) u.cargo = [];
+  if(!u.cargoMode) u.cargoMode = 'evacuate'; // 'evacuate' | 'flank'
+  if(u.flankTarget === undefined) u.flankTarget = null;
+  if(u.flankCooldown === undefined) u.flankCooldown = 0;
+  u.flankCooldown = Math.max(0, u.flankCooldown - dt);
+
+  const allies = units.filter(v=>v.faction===u.faction && v!==u && v.type!=='medivac' && !v.inMedivac);
+  const combatAllies = allies.filter(v=>v.type==='marine'||v.type==='marauder'||v.type==='tank');
+  const hq = buildings.find(b=>b.faction===u.faction&&b.type==='hq'&&b.buildProgress>=1);
+  const enemies = visibleEnemyUnits(u.faction);
+
+  // ── Cargo en vol : soigner + voler vers la destination ──
+  if(u.cargo.length > 0){
+    for(let c of u.cargo){
+      c.hp = Math.min(c.maxHp, c.hp + mt.healRate * 2 * dt);
+      u.energy = Math.max(0, u.energy - mt.energyDrain * 0.5 * dt);
+    }
+
+    // Mode évacuation → retour au QG
+    if(u.cargoMode === 'evacuate' && hq){
+      moveTo(u, hq.x, hq.y, dt);
+      u.angle = Math.atan2(hq.y-u.y, hq.x-u.x);
+      if(dist(u, hq) < 55){
+        u.cargo = u.cargo.filter(c => {
+          if(c.hp >= c.maxHp * 0.7){
+            c.inMedivac = false;
+            c.x = hq.x + (Math.random()-0.5)*70;
+            c.y = hq.y + (Math.random()-0.5)*70;
+            c.state = 'attack';
+            if(typeof particles !== 'undefined')
+              particles.push({x:c.x,y:c.y,vx:0,vy:-40,life:0.5,maxLife:0.5,color:'#00ff88',type:'heal',size:4});
+            return false;
+          }
+          return true;
+        });
+      }
+    }
+
+    // Mode flanking → voler vers le point de flanc et déposer
+    if(u.cargoMode === 'flank' && u.flankTarget){
+      moveTo(u, u.flankTarget.x, u.flankTarget.y, dt);
+      u.angle = Math.atan2(u.flankTarget.y-u.y, u.flankTarget.x-u.x);
+      if(dist(u, u.flankTarget) < 40){
+        for(let c of u.cargo){
+          c.inMedivac = false;
+          c.x = u.flankTarget.x + (Math.random()-0.5)*50;
+          c.y = u.flankTarget.y + (Math.random()-0.5)*50;
+          c.state = 'attack';
+          if(typeof particles !== 'undefined')
+            particles.push({x:c.x,y:c.y,vx:0,vy:-40,life:0.5,maxLife:0.5,color:'#ffaa00',type:'heal',size:4});
+        }
+        u.cargo = [];
+        u.flankTarget = null;
+        u.flankCooldown = 18; // attendre avant le prochain flanking
+      }
+    }
+    return;
+  }
+
+  // ── Évacuation prioritaire : blessés critiques (< 25% PV) ──
+  if(u.cargo.length < mt.cargoMax && u.energy > 20){
+    let critical = combatAllies
+      .filter(v => v.hp < v.maxHp * 0.25 && dist(u, v) < 40)
+      .sort((a,b) => a.hp - b.hp);
+    if(critical.length){
+      let pickup = critical[0];
+      pickup.inMedivac = true;
+      u.cargo.push(pickup);
+      u.cargoMode = 'evacuate';
+      if(typeof particles !== 'undefined')
+        for(let i=0;i<6;i++) particles.push({x:pickup.x,y:pickup.y,vx:(Math.random()-0.5)*40,vy:-50-Math.random()*30,life:0.4,maxLife:0.4,color:'#00ff88',type:'heal',size:3});
+    } else {
+      // Se rapprocher d'un critique éloigné
+      let nearbyCritical = combatAllies.filter(v=>v.hp<v.maxHp*0.25).sort((a,b)=>dist(u,a)-dist(u,b));
+      if(nearbyCritical.length && dist(u, nearbyCritical[0]) < 180){
+        moveTo(u, nearbyCritical[0].x, nearbyCritical[0].y, dt);
+        u.angle = Math.atan2(nearbyCritical[0].y-u.y, nearbyCritical[0].x-u.x);
+        return;
+      }
+    }
+  }
+
+  // ── Transport tactique : flanking / encerclement ──
+  if(u.flankCooldown <= 0 && u.cargo.length === 0 && enemies.length >= 3 && combatAllies.length >= 5){
+    // Centres de gravité des deux camps
+    let ownCx = combatAllies.reduce((s,v)=>s+v.x,0)/combatAllies.length;
+    let ownCy = combatAllies.reduce((s,v)=>s+v.y,0)/combatAllies.length;
+    let enCx  = enemies.reduce((s,v)=>s+v.x,0)/enemies.length;
+    let enCy  = enemies.reduce((s,v)=>s+v.y,0)/enemies.length;
+    // Vecteur de notre force vers l'ennemi
+    let dx = enCx - ownCx, dy = enCy - ownCy;
+    let len = Math.hypot(dx,dy) || 1;
+    // Point de flanc : perpendiculaire au vecteur d'attaque, côté le plus dégagé
+    let f1 = {x: enCx + (-dy/len)*90, y: enCy + ( dx/len)*90};
+    let f2 = {x: enCx + ( dy/len)*90, y: enCy + (-dx/len)*90};
+    // Compter les ennemis proches de chaque flanc — choisir le moins défendu
+    let e1 = enemies.filter(v=>Math.hypot(v.x-f1.x,v.y-f1.y)<70).length;
+    let e2 = enemies.filter(v=>Math.hypot(v.x-f2.x,v.y-f2.y)<70).length;
+    let flankPt = e1 <= e2 ? f1 : f2;
+    flankPt.x = Math.max(30, Math.min(W-30, flankPt.x));
+    flankPt.y = Math.max(30, Math.min(H-30, flankPt.y));
+    // Embarquer 2-3 marines/marauders proches et en bonne santé
+    let candidates = combatAllies
+      .filter(v=>(v.type==='marine'||v.type==='marauder') && v.hp > v.maxHp*0.6 && dist(u,v) < 70)
+      .sort((a,b)=>dist(u,a)-dist(u,b))
+      .slice(0, 3);
+    if(candidates.length >= 2){
+      for(let c of candidates){
+        c.inMedivac = true;
+        u.cargo.push(c);
+        if(typeof particles !== 'undefined')
+          particles.push({x:c.x,y:c.y,vx:0,vy:-40,life:0.5,maxLife:0.5,color:'#ffaa00',type:'heal',size:4});
+      }
+      u.cargoMode = 'flank';
+      u.flankTarget = flankPt;
+      return;
+    }
+  }
+
+  // ── Soin continu des alliés blessés à portée ──
   let wounded = allies.filter(v=>v.hp<v.maxHp && dist(u,v)<=u.range);
   let healed = false;
   if(u.energy > 0){
     for(let v of wounded){
-      v.hp = Math.min(v.maxHp, v.hp + t.healRate * dt);
+      v.hp = Math.min(v.maxHp, v.hp + mt.healRate * dt);
       healed = true;
-      if(Math.random()<0.2) particles.push({x:v.x+(Math.random()-0.5)*8,y:v.y-v.size-4,vx:(Math.random()-0.5)*15,vy:-30,life:0.35,maxLife:0.35,color:'#00ff88',type:'heal',size:2.5});
+      if(typeof particles !== 'undefined' && Math.random()<0.2)
+        particles.push({x:v.x+(Math.random()-0.5)*8,y:v.y-v.size-4,vx:(Math.random()-0.5)*15,vy:-30,life:0.35,maxLife:0.35,color:'#00ff88',type:'heal',size:2.5});
     }
     if(healed) u.energy = Math.max(0, u.energy - mt.energyDrain * dt);
   }
   if(!healed) u.energy = Math.min(mt.maxEnergy, u.energy + mt.energyRegen * dt);
 
-  // ── Se positionner sur l'allié le plus blessé à portée de soin ──
-  let combatAllies = allies.filter(v=>v.type==='marine'||v.type==='marauder'||v.type==='tank');
-
-  // Priorité : allié blessé le plus proche
-  let mostWounded = combatAllies.filter(v=>v.hp<v.maxHp*0.8)
-    .sort((a,b)=>(a.hp/a.maxHp)-(b.hp/b.maxHp))[0];
-
+  // ── Positionnement : suivre le blessé ou le groupe ──
+  let mostWounded = combatAllies.filter(v=>v.hp<v.maxHp*0.8).sort((a,b)=>(a.hp/a.maxHp)-(b.hp/b.maxHp))[0];
   if(mostWounded){
-    // Suivre l'allié le plus blessé
     let d = dist(u, mostWounded);
-    if(d > u.range * 0.6){
-      moveTo(u, mostWounded.x, mostWounded.y, dt);
-      u.angle = Math.atan2(mostWounded.y-u.y, mostWounded.x-u.x);
-    } else {
-      // Orbiter autour de lui
-      let a = Math.atan2(u.y-mostWounded.y, u.x-mostWounded.x) + dt*1.2;
-      moveTo(u, mostWounded.x+Math.cos(a)*50, mostWounded.y+Math.sin(a)*50, dt);
-    }
+    if(d > u.range * 0.6){ moveTo(u, mostWounded.x, mostWounded.y, dt); u.angle=Math.atan2(mostWounded.y-u.y,mostWounded.x-u.x); }
+    else { let a=Math.atan2(u.y-mostWounded.y,u.x-mostWounded.x)+dt*1.2; moveTo(u,mostWounded.x+Math.cos(a)*50,mostWounded.y+Math.sin(a)*50,dt); }
     return;
   }
-
-  // Pas de blessé → suivre le groupe de combat
   if(combatAllies.length){
-    let center = combatAllies.reduce((acc,v)=>({x:acc.x+v.x/combatAllies.length,y:acc.y+v.y/combatAllies.length}),{x:0,y:0});
-    let d = dist(u, center);
-    if(d > u.range * 0.7){
-      moveTo(u, center.x, center.y, dt);
-      u.angle = Math.atan2(center.y-u.y, center.x-u.x);
-    } else {
-      let a = Math.atan2(u.y-center.y, u.x-center.x) + dt*0.8;
-      moveTo(u, center.x+Math.cos(a)*60, center.y+Math.sin(a)*60, dt);
-    }
+    let center=combatAllies.reduce((acc,v)=>({x:acc.x+v.x/combatAllies.length,y:acc.y+v.y/combatAllies.length}),{x:0,y:0});
+    let d=dist(u,center);
+    if(d>u.range*0.7){ moveTo(u,center.x,center.y,dt); u.angle=Math.atan2(center.y-u.y,center.x-u.x); }
+    else { let a=Math.atan2(u.y-center.y,u.x-center.x)+dt*0.8; moveTo(u,center.x+Math.cos(a)*60,center.y+Math.sin(a)*60,dt); }
     return;
   }
-
-  // Personne à soigner → revenir au HQ
-  let hq = buildings.find(b=>b.faction===u.faction&&b.type==='hq'&&b.buildProgress>=1);
   if(hq && dist(u,hq)>80) moveTo(u, hq.x, hq.y, dt);
 }
 
 // ─── COMBAT ──────────────────────────────────────────────────────────────────
+function isAirUnit(u){ return u.type==='medivac' || (u.type==='viking' && u.vikingMode==='air'); }
+
+// ─── HÉLION ─────────────────────────────────────────────────────────────────
+function doHellion(u, dt){
+  // ── Retraite si PV critiques ──
+  const hpRatio = u.hp / u.maxHp;
+  if(hpRatio < 0.25){
+    let hq = buildings.find(b=>b.faction===u.faction&&b.type==='hq'&&b.buildProgress>=1);
+    if(hq){ u.state='retreat'; moveTo(u,hq.x,hq.y,dt); u.angle=Math.atan2(hq.y-u.y,hq.x-u.x); return; }
+  }
+  if(u.state==='retreat' && hpRatio>=0.6) u.state='attack';
+  if(u.state==='retreat'){
+    let hq=buildings.find(b=>b.faction===u.faction&&b.type==='hq'&&b.buildProgress>=1);
+    if(hq){ moveTo(u,hq.x,hq.y,dt); u.angle=Math.atan2(hq.y-u.y,hq.x-u.x); } return;
+  }
+  if(u.state==='scout'){ doScout(u,dt); return; }
+
+  let target = resolveTarget(u);
+  if(!target){
+    moveTo(u, W/2+(Math.random()-0.5)*100, H/2+(Math.random()-0.5)*100, dt);
+    u.state='attack'; return;
+  }
+  u.target = target.id; u.state = 'attack';
+  let d = dist(u, target);
+  u.angle = Math.atan2(target.y-u.y, target.x-u.x);
+
+  if(d > u.range){
+    u.x += Math.cos(u.angle) * u.speed * 60 * dt;
+    u.y += Math.sin(u.angle) * u.speed * 60 * dt;
+  } else if(u.attackCooldown <= 0){
+    // ── Lance-flamme en cône : tous les ennemis terrestres dans ±40° ──
+    const coneHalf = Math.PI / 4.5;
+    const coneTargets = activeEnemyUnits(u.faction).filter(v=>{
+      if(isAirUnit(v)||factions[v.faction]?.eliminated) return false;
+      let dv=dist(u,v); if(dv>u.range) return false;
+      let diff=Math.abs(((Math.atan2(v.y-u.y,v.x-u.x)-u.angle)+Math.PI*3)%(Math.PI*2)-Math.PI);
+      return diff<coneHalf;
+    });
+    const coneBuildings = activeEnemyBuildings(u.faction).filter(b=>{
+      let dv=dist(u,b); if(dv>u.range) return false;
+      let diff=Math.abs(((Math.atan2(b.y-u.y,b.x-u.x)-u.angle)+Math.PI*3)%(Math.PI*2)-Math.PI);
+      return diff<coneHalf;
+    });
+    for(let t of [...coneTargets,...coneBuildings]){
+      let dmg = u.attack * (UNIT_TYPES[t.type]?.light ? UNIT_TYPES.hellion.lightBonus : 1);
+      let died = damageEntity(t, dmg, u);
+      if(died && !t.hasOwnProperty('buildProgress')){ u.killCount++; factions[u.faction].stats.killCount++; }
+    }
+    // Flammes visuelles
+    if(typeof particles!=='undefined'){
+      for(let i=0;i<7;i++){
+        let a=u.angle+(Math.random()-0.5)*coneHalf*2;
+        particles.push({x:u.x+Math.cos(u.angle)*u.size,y:u.y+Math.sin(u.angle)*u.size,
+          vx:Math.cos(a)*(80+Math.random()*70),vy:Math.sin(a)*(80+Math.random()*70),
+          life:0.25+Math.random()*0.15,maxLife:0.4,
+          color:Math.random()<0.6?'#ff6600':'#ffcc00',type:'heal',size:3+Math.random()*3});
+      }
+    }
+    u.attackCooldown = 0.45 + Math.random()*0.2;
+  }
+}
+
+// ─── VIKING ─────────────────────────────────────────────────────────────────
+function doViking(u, dt){
+  const vt = UNIT_TYPES.viking;
+  if(!u.vikingMode)      u.vikingMode = 'ground';
+  if(!u.vikingModeTimer) u.vikingModeTimer = 0;
+  u.vikingModeTimer = Math.max(0, u.vikingModeTimer - dt);
+
+  if(u.vikingModeTimer <= 0){
+    const airEnemies    = visibleEnemyUnits(u.faction).filter(v => isAirUnit(v));
+    const groundEnemies = visibleEnemyUnits(u.faction).filter(v => !isAirUnit(v) && v.type !== 'worker');
+    // Passe en mode air si des cibles aériennes sont visibles ET pas de sol à portée immédiate
+    if(u.vikingMode === 'ground' && airEnemies.length > 0 && groundEnemies.length === 0){
+      u.vikingMode = 'air'; u.speed = vt.airSpeed; u.attack = vt.airAttack; u.vikingModeTimer = 3;
+    } else if(u.vikingMode === 'air' && (airEnemies.length === 0 || groundEnemies.length > 0)){
+      u.vikingMode = 'ground'; u.speed = vt.speed; u.attack = vt.attack; u.vikingModeTimer = 3;
+    }
+  }
+  if(u.state === 'scout') doScout(u, dt);
+  else doCombatUnit(u, dt);
+}
+
 // Logique combat unité militaire — NE PASSE JAMAIS À IDLE
 function doCombatUnit(u, dt) {
   // ── Décompte stimulant ──
@@ -730,7 +1005,15 @@ function doCombatUnit(u, dt) {
       spawnBullet(u.x, u.y, target.x, target.y, u.faction);
       let cd = u.type==='marauder' ? 1.2+Math.random()*0.3 : 0.7+Math.random()*0.35;
       u.attackCooldown = cd / (u.stimActive?1.5:1);
+      // Mémorise la direction de kite au moment du tir (évite les rotations dues aux changements de cible)
+      if(u.type==='marine'){ u.kiteTimer = 0.3; u.kiteAngle = Math.atan2(u.y - target.y, u.x - target.x); }
       if(died){ u.killCount++; factions[u.faction].stats.killCount++; }
+    }
+    // ── Kiting : recule brièvement après chaque tir (direction fixe pendant 0.3s) ──
+    if(u.type==='marine' && u.kiteTimer > 0 && !target.buildProgress) {
+      u.kiteTimer = Math.max(0, u.kiteTimer - dt);
+      u.x += Math.cos(u.kiteAngle) * u.speed * 60 * dt * 0.8;
+      u.y += Math.sin(u.kiteAngle) * u.speed * 60 * dt * 0.8;
     }
     u.attackCooldown = Math.max(0, u.attackCooldown - dt);
   }
@@ -738,8 +1021,18 @@ function doCombatUnit(u, dt) {
 
 // Résoudre la cible d'une unité de combat
 function resolveTarget(u) {
+  // Filtrage du pool selon le type d'unité
+  let pool = visibleEnemyUnits(u.faction);
+  if(u.type === 'hellion'){
+    pool = pool.filter(v => !isAirUnit(v)); // terrestres uniquement
+  }
+  if(u.type === 'viking'){
+    pool = u.vikingMode === 'air'
+      ? pool.filter(v => isAirUnit(v))
+      : pool.filter(v => !isAirUnit(v));
+  }
   // 0. Cible opportuniste : ennemi visible à portée d'attaque (priorité absolue)
-  let immediate = findClosestInRange(visibleEnemyUnits(u.faction), u.x, u.y, u.range * 1.5);
+  let immediate = findClosestInRange(pool, u.x, u.y, u.range * 1.5);
   if(immediate) return immediate;
 
   // 1. Essayer la cible actuelle
@@ -759,6 +1052,26 @@ function resolveTarget(u) {
 }
 
 function pickCombatTarget(u) {
+  if(u.type==='hellion'){
+    // Prioriser les unités légères (bonus dégâts)
+    let en = visibleEnemyUnits(u.faction).filter(v=>!isAirUnit(v));
+    let light = en.filter(v=>UNIT_TYPES[v.type]?.light);
+    if(light.length) return findClosest(light, u.x, u.y);
+    if(en.length) return findClosest(en, u.x, u.y);
+    let eb = visibleEnemyBuildings(u.faction);
+    return eb.length ? findClosest(eb, u.x, u.y) : null;
+  }
+  if(u.type==='viking'){
+    if(u.vikingMode==='air'){
+      let en = visibleEnemyUnits(u.faction).filter(v=>isAirUnit(v));
+      return en.length ? findClosest(en, u.x, u.y) : null;
+    } else {
+      let en = visibleEnemyUnits(u.faction).filter(v=>!isAirUnit(v)&&v.type!=='worker');
+      if(en.length) return findClosest(en, u.x, u.y);
+      let eb = visibleEnemyBuildings(u.faction);
+      return eb.length ? findClosest(eb, u.x, u.y) : null;
+    }
+  }
   if(u.type==='marine'||u.type==='marauder'||u.type==='tank'){
     let eb = visibleEnemyBuildings(u.faction);
     let hqs = eb.filter(b=>b.type==='hq');
@@ -849,12 +1162,22 @@ function doBuild(u,dt) {
   }
 }
 
+function tileBlocked(px,py){
+  let col=Math.floor(px/TILE), row=Math.floor(py/TILE);
+  return row>=0&&row<ROWS&&col>=0&&col<COLS&&map[row]&&map[row][col]===1;
+}
+
 function moveTo(u,tx,ty,dt) {
   let dx=tx-u.x,dy=ty-u.y,d=Math.hypot(dx,dy);
   if(d<2) return;
   u.angle=Math.atan2(dy,dx);
-  u.x+=(dx/d)*u.speed*60*dt;
-  u.y+=(dy/d)*u.speed*60*dt;
+  let step=u.speed*60*dt;
+  let nx=u.x+(dx/d)*step, ny=u.y+(dy/d)*step;
+  // Escape if already stuck inside a tile
+  if(tileBlocked(u.x,u.y)){u.x=nx;u.y=ny;return;}
+  if(!tileBlocked(nx,ny)){u.x=nx;u.y=ny;}
+  else if(!tileBlocked(nx,u.y)){u.x=nx;}   // slide along X
+  else if(!tileBlocked(u.x,ny)){u.y=ny;}   // slide along Y
 }
 
 // ─── DAMAGE ───────────────────────────────────────────────────────────────────
@@ -1279,6 +1602,24 @@ function render(){
   ctx.fillStyle='#050a0f'; ctx.fillRect(0,0,W,H);
   drawMap(); drawResources(); drawBuildings(); drawUnits(); drawParticles();
   if(fogFaction) drawFog(fogFaction);
+  drawDominanceBar();
+}
+
+function drawDominanceBar(){
+  const alive = FACTION_DEFS.filter(fd=>!factions[fd.id]?.eliminated);
+  if(alive.length < 2) return;
+  const powers = alive.map(fd=>({ fd, p: Math.max(0.1, milPower(fd.id)) }));
+  const total = powers.reduce((s,x)=>s+x.p, 0);
+  const BAR_H = 6, BAR_Y = H - BAR_H, BAR_W = W;
+  let x = 0;
+  for(let {fd, p} of powers){
+    let w = (p / total) * BAR_W;
+    ctx.fillStyle = fd.color;
+    ctx.globalAlpha = 0.75;
+    ctx.fillRect(x, BAR_Y, w, BAR_H);
+    x += w;
+  }
+  ctx.globalAlpha = 1;
 }
 
 // ─── BROUILLARD DE GUERRE ─────────────────────────────────────────────────────
@@ -1336,8 +1677,21 @@ function drawFog(fid){
 function drawMap(){
   for(let y=0;y<ROWS;y++) for(let x=0;x<COLS;x++){
     if(!map[y]) continue;
-    if(map[y][x]===1){ctx.fillStyle='#0c1a24';ctx.fillRect(x*TILE,y*TILE,TILE,TILE);}
-    else if((x+y)%2===0){ctx.fillStyle='rgba(0,40,60,0.025)';ctx.fillRect(x*TILE,y*TILE,TILE,TILE);}
+    if(map[y][x]===1){
+      const px=x*TILE, py=y*TILE;
+      // Rock base
+      ctx.fillStyle='#3a3a42'; ctx.fillRect(px,py,TILE,TILE);
+      // Inner rock texture
+      ctx.fillStyle='#2e2e38'; ctx.fillRect(px+2,py+2,TILE-4,TILE-4);
+      // Top-left highlight (light source from top-left)
+      ctx.fillStyle='rgba(180,175,200,0.18)';
+      ctx.fillRect(px,py,TILE,2); ctx.fillRect(px,py,2,TILE);
+      // Bottom-right shadow
+      ctx.fillStyle='rgba(0,0,0,0.35)';
+      ctx.fillRect(px,py+TILE-2,TILE,2); ctx.fillRect(px+TILE-2,py,2,TILE);
+    } else if((x+y)%2===0){
+      ctx.fillStyle='rgba(0,40,60,0.025)';ctx.fillRect(x*TILE,y*TILE,TILE,TILE);
+    }
   }
   ctx.strokeStyle='rgba(100,150,200,0.04)'; ctx.lineWidth=1; ctx.setLineDash([4,10]);
   ctx.beginPath();ctx.moveTo(W/2,0);ctx.lineTo(W/2,H);ctx.stroke();
@@ -1451,6 +1805,7 @@ function drawHex(cx,cy,r){
 
 function drawUnits(){
   for(let u of units){
+    if(u.inMedivac) continue;
     let fd=FACTION_DEFS.find(f=>f.id===u.faction), col=fd?.color||'#fff';
     ctx.save(); ctx.translate(u.x,u.y); ctx.rotate(u.angle);
     ctx.globalAlpha=u.type==='worker'?0.75: u.state==='retreat'?0.5 :1;
@@ -1467,14 +1822,20 @@ function drawUnits(){
       ctx.shadowBlur=0; ctx.fillStyle='#ff2244';
       ctx.fillRect(-1, -u.size*0.7, 2, u.size*1.4);
       ctx.fillRect(-u.size*0.7, -1, u.size*1.4, 2);
-      // Halo vert si cargo
+      // Halo vert pulsant si cargo + badge nombre
       if(u.cargo&&u.cargo.length>0){
-        ctx.strokeStyle='#00ff88'; ctx.lineWidth=1.5; ctx.globalAlpha=0.6;
-        ctx.beginPath(); ctx.ellipse(0,0,u.size*2,u.size*1.5,0,0,Math.PI*2); ctx.stroke();
+        ctx.strokeStyle='#00ff88'; ctx.lineWidth=2; ctx.globalAlpha=0.5+0.3*Math.sin(Date.now()/150);
+        ctx.beginPath(); ctx.ellipse(0,0,u.size*2.2,u.size*1.7,0,0,Math.PI*2); ctx.stroke();
         ctx.globalAlpha=1;
       }
       // Altitude : ombre au sol
       ctx.restore(); ctx.globalAlpha=1;
+      // Badge cargo (nombre d'unités embarquées)
+      if(u.cargo&&u.cargo.length>0){
+        ctx.fillStyle='#00ff88'; ctx.beginPath(); ctx.arc(u.x+u.size*1.4,u.y-u.size,6,0,Math.PI*2); ctx.fill();
+        ctx.fillStyle='#000'; ctx.font='bold 8px Share Tech Mono'; ctx.textAlign='center'; ctx.textBaseline='middle';
+        ctx.fillText(u.cargo.length, u.x+u.size*1.4, u.y-u.size);
+      }
       ctx.fillStyle='rgba(0,0,0,0.18)';
       ctx.beginPath(); ctx.ellipse(u.x, u.y+u.size*1.8, u.size*1.2, u.size*0.5, 0, 0, Math.PI*2); ctx.fill();
       // HP bar
@@ -1504,6 +1865,37 @@ function drawUnits(){
       if(u.stimActive){ ctx.shadowBlur=14; ctx.shadowColor='#fff'; }
       ctx.beginPath();ctx.moveTo(u.size,0);ctx.lineTo(-u.size/2,-u.size/2);ctx.lineTo(-u.size/2,u.size/2);ctx.closePath();ctx.fill();
       ctx.shadowBlur=0;
+    } else if(u.type==='hellion'){
+      // Buggy bas et large
+      ctx.beginPath(); ctx.rect(-u.size*1.3,-u.size*0.55,u.size*2.6,u.size*1.1); ctx.fill();
+      ctx.strokeStyle='rgba(255,140,0,0.55)'; ctx.lineWidth=1.5; ctx.stroke();
+      // Canon lance-flamme à l'avant
+      ctx.fillStyle='rgba(255,200,80,0.9)';
+      ctx.fillRect(u.size*0.9,-1.5,u.size*1.0,3);
+      ctx.shadowBlur=0;
+    } else if(u.type==='viking'){
+      if(u.vikingMode==='air'){
+        // Losange aérien
+        ctx.beginPath();
+        ctx.moveTo(0,-u.size*1.3); ctx.lineTo(u.size*1.1,0);
+        ctx.lineTo(0,u.size*1.3);  ctx.lineTo(-u.size*1.1,0);
+        ctx.closePath(); ctx.fill();
+        ctx.restore(); ctx.globalAlpha=1;
+        // Ombre au sol (indique l'altitude)
+        ctx.fillStyle='rgba(0,0,0,0.22)';
+        ctx.beginPath(); ctx.ellipse(u.x, u.y+u.size*2.5, u.size*1.1, u.size*0.4, 0, 0, Math.PI*2); ctx.fill();
+        // Badge mode air
+        ctx.fillStyle=col; ctx.font='bold 8px Share Tech Mono'; ctx.textAlign='center'; ctx.textBaseline='middle';
+        ctx.fillText('✈', u.x, u.y-u.size*1.3-6);
+        if(u.hp<u.maxHp){ctx.fillStyle='#300';ctx.fillRect(u.x-u.size,u.y-u.size-4,u.size*2,2);ctx.fillStyle='#0c0';ctx.fillRect(u.x-u.size,u.y-u.size-4,u.size*2*(u.hp/u.maxHp),2);}
+        continue;
+      } else {
+        // Pentagone sol
+        ctx.beginPath();
+        for(let i=0;i<5;i++){let a=(i/5)*Math.PI*2-Math.PI/2;i===0?ctx.moveTo(Math.cos(a)*u.size*1.1,Math.sin(a)*u.size*1.1):ctx.lineTo(Math.cos(a)*u.size*1.1,Math.sin(a)*u.size*1.1);}
+        ctx.closePath(); ctx.fill();
+        ctx.shadowBlur=0; ctx.strokeStyle='rgba(180,180,255,0.5)'; ctx.lineWidth=1.5; ctx.stroke();
+      }
     } else {
       // Tank
       ctx.fillRect(-u.size,-u.size/1.5,u.size*2,u.size*1.3);
@@ -2038,8 +2430,13 @@ function updateGameHeadless(dt){
     if(b.type==='factory'){
       b.spawnTimer-=dt;
       if(b.spawnTimer<=0){
-        let t=myUnits(b.faction).filter(u=>u.type==='tank').length;
-        if(t<6&&f.resources>=150&&f.vespene>=100){f.resources-=150;f.vespene-=100;units.push(makeUnit(b.faction,'tank',b.x+(Math.random()-0.5)*30,b.y+(Math.random()-0.5)*30));b.spawnTimer=22;}
+        let vt=myUnits(b.faction).filter(u=>u.type==='tank').length;
+        let vh=myUnits(b.faction).filter(u=>u.type==='hellion').length;
+        let enemyLight=visibleEnemyUnits(b.faction).filter(v=>UNIT_TYPES[v.type]?.light&&!isAirUnit(v)).length;
+        // Décision IA : hélions si beaucoup d'unités légères ennemies ou déséquilibre, tanks sinon
+        let buildHellion = vh<4 && (enemyLight>3 || vh<vt);
+        if(buildHellion&&f.resources>=100){f.resources-=100;units.push(makeUnit(b.faction,'hellion',b.x+(Math.random()-0.5)*30,b.y+(Math.random()-0.5)*30));b.spawnTimer=15;}
+        else if(vt<6&&f.resources>=150&&f.vespene>=100){f.resources-=150;f.vespene-=100;units.push(makeUnit(b.faction,'tank',b.x+(Math.random()-0.5)*30,b.y+(Math.random()-0.5)*30));b.spawnTimer=22;}
         else b.spawnTimer=4;
       }
     }
@@ -2047,7 +2444,27 @@ function updateGameHeadless(dt){
       b.spawnTimer-=dt;
       if(b.spawnTimer<=0){
         let mv=myUnits(b.faction).filter(u=>u.type==='medivac').length;
-        if(mv<3&&f.resources>=100&&f.vespene>=100){f.resources-=100;f.vespene-=100;units.push(makeUnit(b.faction,'medivac',b.x+(Math.random()-0.5)*30,b.y+(Math.random()-0.5)*30));b.spawnTimer=28;}
+        let vk=myUnits(b.faction).filter(u=>u.type==='viking').length;
+        let airThreats=visibleEnemyUnits(b.faction).filter(v=>isAirUnit(v)).length;
+        let groundForces=myUnits(b.faction).filter(u=>u.type==='marine'||u.type==='marauder'||u.type==='tank');
+        let avgHp=groundForces.length?groundForces.reduce((s,u)=>s+u.hp/u.maxHp,0)/groundForces.length:1;
+        // ── Décision IA : viking ou medivac ? ──
+        let buildViking=false, buildMedivac=false;
+        if(vk<3 && airThreats>vk){
+          buildViking=true;                        // menaces aériennes supérieures → anti-air urgent
+        } else if(mv===0){
+          buildMedivac=true;                       // aucun soignant → toujours en produire un
+        } else if(avgHp<0.65 && mv<3 && mv<=vk){
+          buildMedivac=true;                       // troupes au sol en mauvais état → plus de soin
+        } else if(vk<2 && airThreats>0 && vk<mv){
+          buildViking=true;                        // menaces aériennes présentes, rééquilibrer
+        } else if(mv<2){
+          buildMedivac=true;                       // soin par défaut si sous le cap
+        } else if(vk<2){
+          buildViking=true;                        // anti-air par défaut si sous le cap
+        }
+        if(buildViking&&f.resources>=100&&f.vespene>=75){f.resources-=100;f.vespene-=75;units.push(makeUnit(b.faction,'viking',b.x+(Math.random()-0.5)*30,b.y+(Math.random()-0.5)*30));b.spawnTimer=25;}
+        else if(buildMedivac&&f.resources>=100&&f.vespene>=100){f.resources-=100;f.vespene-=100;units.push(makeUnit(b.faction,'medivac',b.x+(Math.random()-0.5)*30,b.y+(Math.random()-0.5)*30));b.spawnTimer=28;}
         else b.spawnTimer=4;
       }
     }
@@ -2055,6 +2472,7 @@ function updateGameHeadless(dt){
   for(let i=units.length-1;i>=0;i--){
     let u=units[i];
     if(factions[u.faction]?.eliminated){units.splice(i,1);continue;}
+    if(u.inMedivac) continue;
     u.attackCooldown=Math.max(0,u.attackCooldown-dt);
     if(u.type==='worker'){
       if(u.state==='idle') assignWorkerTask(u);
@@ -2063,6 +2481,10 @@ function updateGameHeadless(dt){
       else if(u.state==='build') doBuild(u,dt);
     } else if(u.type==='medivac'){
       doMedivac(u,dt);
+    } else if(u.type==='viking'){
+      doViking(u,dt);
+    } else if(u.type==='hellion'){
+      doHellion(u,dt);
     } else {
       if(u.state==='scout') doScout(u,dt);
       else doCombatUnit(u,dt);
