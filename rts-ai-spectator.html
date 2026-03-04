@@ -209,10 +209,74 @@ function resize() {
 
 function generateMap() {
   map=[];
-  for(let y=0;y<ROWS;y++){map[y]=[];for(let x=0;x<COLS;x++)map[y][x]=Math.random()<0.025?1:0;}
-  // Dégager les coins pour les bases
-  [[0,0],[COLS-8,0],[0,ROWS-8],[COLS-8,ROWS-8]].forEach(([cx,cy])=>{
-    for(let dy=0;dy<10;dy++)for(let dx=0;dx<10;dx++){let y=cy+dy,x=cx+dx;if(map[y])map[y][x]=0;}
+  for(let y=0;y<ROWS;y++){map[y]=[];for(let x=0;x<COLS;x++)map[y][x]=0;}
+
+  // Place organic rock clusters via random walk seeding
+  function placeCluster(cx,cy,size){
+    let cells=[{x:Math.round(cx),y:Math.round(cy)}];
+    if(map[Math.round(cy)]&&Math.round(cx)>=0&&Math.round(cx)<COLS) map[Math.round(cy)][Math.round(cx)]=1;
+    for(let i=0;i<size;i++){
+      let s=cells[Math.floor(Math.random()*cells.length)];
+      let dx=Math.floor(Math.random()*3)-1, dy=Math.floor(Math.random()*3)-1;
+      let nx=s.x+dx, ny=s.y+dy;
+      if(ny>=0&&ny<ROWS&&nx>=0&&nx<COLS&&!map[ny][nx]){
+        map[ny][nx]=1; cells.push({x:nx,y:ny});
+      }
+    }
+  }
+
+  const midX=Math.floor(COLS/2), midY=Math.floor(ROWS/2);
+
+  // Central large formation
+  placeCluster(midX, midY, 60);
+
+  // Mid-lane clusters (symmetric)
+  placeCluster(midX-Math.floor(COLS*0.18), midY, 28);
+  placeCluster(midX+Math.floor(COLS*0.18), midY, 28);
+  placeCluster(midX, midY-Math.floor(ROWS*0.18), 28);
+  placeCluster(midX, midY+Math.floor(ROWS*0.18), 28);
+
+  // Diagonal accent clusters (offset from resource positions)
+  placeCluster(midX-Math.floor(COLS*0.09), midY-Math.floor(ROWS*0.26), 15);
+  placeCluster(midX+Math.floor(COLS*0.09), midY-Math.floor(ROWS*0.26), 15);
+  placeCluster(midX-Math.floor(COLS*0.09), midY+Math.floor(ROWS*0.26), 15);
+  placeCluster(midX+Math.floor(COLS*0.09), midY+Math.floor(ROWS*0.26), 15);
+
+  // Clear base corners (14×14 tiles from each corner)
+  const cl=14;
+  [[0,0],[COLS-1,0],[0,ROWS-1],[COLS-1,ROWS-1]].forEach(([bx,by])=>{
+    const sx=bx===0?1:-1, sy=by===0?1:-1;
+    for(let dy=0;dy<cl;dy++) for(let dx=0;dx<cl;dx++){
+      let y=by+sy*dy, x=bx+sx*dx;
+      if(y>=0&&y<ROWS&&x>=0&&x<COLS) map[y][x]=0;
+    }
+  });
+
+  // Defensive rock walls around each base (2 tiles thick, gap at inner corner)
+  const wd=cl, wl=10; // wall at tile cl from corner, length wl (gap = wd-wl = 4 tiles)
+  function wallH(r,c0,c1){for(let c=c0;c<=c1;c++) for(let t=0;t<2;t++){let rr=r+t;if(rr>=0&&rr<ROWS&&c>=0&&c<COLS)map[rr][c]=1;}}
+  function wallV(c,r0,r1){for(let r=r0;r<=r1;r++) for(let t=0;t<2;t++){let cc=c+t;if(r>=0&&r<ROWS&&cc>=0&&cc<COLS)map[r][cc]=1;}}
+  // Top-left base
+  wallH(wd, 0, wl);              wallV(wd, 0, wl);
+  // Top-right base
+  wallH(wd, COLS-1-wl, COLS-1); wallV(COLS-wd-2, 0, wl);
+  // Bottom-left base
+  wallH(ROWS-wd-2, 0, wl);      wallV(wd, ROWS-1-wl, ROWS-1);
+  // Bottom-right base
+  wallH(ROWS-wd-2, COLS-1-wl, COLS-1); wallV(COLS-wd-2, ROWS-1-wl, ROWS-1);
+
+  // Clear central resource clusters (base corners already cleared above; only central ones need explicit clearing)
+  const rclears=[
+    {cx:Math.floor(W*0.38/TILE),cy:Math.floor(H*0.35/TILE)},
+    {cx:Math.floor(W*0.62/TILE),cy:Math.floor(H*0.35/TILE)},
+    {cx:Math.floor(W*0.38/TILE),cy:Math.floor(H*0.65/TILE)},
+    {cx:Math.floor(W*0.62/TILE),cy:Math.floor(H*0.65/TILE)},
+  ];
+  rclears.forEach(({cx,cy})=>{
+    for(let dy=-3;dy<=4;dy++) for(let dx=-3;dx<=3;dx++){
+      let ny=cy+dy,nx=cx+dx;
+      if(ny>=0&&ny<ROWS&&nx>=0&&nx<COLS) map[ny][nx]=0;
+    }
   });
 }
 
@@ -1098,12 +1162,22 @@ function doBuild(u,dt) {
   }
 }
 
+function tileBlocked(px,py){
+  let col=Math.floor(px/TILE), row=Math.floor(py/TILE);
+  return row>=0&&row<ROWS&&col>=0&&col<COLS&&map[row]&&map[row][col]===1;
+}
+
 function moveTo(u,tx,ty,dt) {
   let dx=tx-u.x,dy=ty-u.y,d=Math.hypot(dx,dy);
   if(d<2) return;
   u.angle=Math.atan2(dy,dx);
-  u.x+=(dx/d)*u.speed*60*dt;
-  u.y+=(dy/d)*u.speed*60*dt;
+  let step=u.speed*60*dt;
+  let nx=u.x+(dx/d)*step, ny=u.y+(dy/d)*step;
+  // Escape if already stuck inside a tile
+  if(tileBlocked(u.x,u.y)){u.x=nx;u.y=ny;return;}
+  if(!tileBlocked(nx,ny)){u.x=nx;u.y=ny;}
+  else if(!tileBlocked(nx,u.y)){u.x=nx;}   // slide along X
+  else if(!tileBlocked(u.x,ny)){u.y=ny;}   // slide along Y
 }
 
 // ─── DAMAGE ───────────────────────────────────────────────────────────────────
@@ -1603,8 +1677,21 @@ function drawFog(fid){
 function drawMap(){
   for(let y=0;y<ROWS;y++) for(let x=0;x<COLS;x++){
     if(!map[y]) continue;
-    if(map[y][x]===1){ctx.fillStyle='#0c1a24';ctx.fillRect(x*TILE,y*TILE,TILE,TILE);}
-    else if((x+y)%2===0){ctx.fillStyle='rgba(0,40,60,0.025)';ctx.fillRect(x*TILE,y*TILE,TILE,TILE);}
+    if(map[y][x]===1){
+      const px=x*TILE, py=y*TILE;
+      // Rock base
+      ctx.fillStyle='#3a3a42'; ctx.fillRect(px,py,TILE,TILE);
+      // Inner rock texture
+      ctx.fillStyle='#2e2e38'; ctx.fillRect(px+2,py+2,TILE-4,TILE-4);
+      // Top-left highlight (light source from top-left)
+      ctx.fillStyle='rgba(180,175,200,0.18)';
+      ctx.fillRect(px,py,TILE,2); ctx.fillRect(px,py,2,TILE);
+      // Bottom-right shadow
+      ctx.fillStyle='rgba(0,0,0,0.35)';
+      ctx.fillRect(px,py+TILE-2,TILE,2); ctx.fillRect(px+TILE-2,py,2,TILE);
+    } else if((x+y)%2===0){
+      ctx.fillStyle='rgba(0,40,60,0.025)';ctx.fillRect(x*TILE,y*TILE,TILE,TILE);
+    }
   }
   ctx.strokeStyle='rgba(100,150,200,0.04)'; ctx.lineWidth=1; ctx.setLineDash([4,10]);
   ctx.beginPath();ctx.moveTo(W/2,0);ctx.lineTo(W/2,H);ctx.stroke();
