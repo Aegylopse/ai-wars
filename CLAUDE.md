@@ -7,7 +7,7 @@
 - Branche de travail : `claude/wonderful-tesla` → PR vers `main`
 
 ## Règles de workflow
-- **Ne jamais committer automatiquement** — attendre la demande explicite de l'utilisateur
+- **Committer automatiquement** après chaque ensemble de modifications, sans attendre la demande
 - **Langue** : français dans le jeu, français dans les échanges
 - **Vitesse par défaut** du jeu : ×3
 - Après chaque modification de code, vérifier via le serveur de preview (preview_screenshot, preview_console_logs)
