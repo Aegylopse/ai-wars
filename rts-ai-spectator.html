@@ -839,7 +839,7 @@ function doHellion(u, dt){
 
   let target = resolveTarget(u);
   if(!target){
-    moveTo(u, W/2+(Math.random()-0.5)*100, H/2+(Math.random()-0.5)*100, dt);
+    roamToEnemy(u, dt);
     u.state='attack'; return;
   }
   u.target = target.id; u.state = 'attack';
@@ -900,6 +900,17 @@ function doViking(u, dt){
   }
   if(u.state === 'scout') doScout(u, dt);
   else doCombatUnit(u, dt);
+}
+
+// Quand une unité n'a pas de cible : aller vers le bâtiment ennemi connu le plus proche,
+// sinon vers le quadrant opposé au HQ allié (jamais le centre fixe).
+function roamToEnemy(u, dt) {
+  const eb = visibleEnemyBuildings(u.faction);
+  if(eb.length) { moveTo(u, eb[0].x+(Math.random()-0.5)*60, eb[0].y+(Math.random()-0.5)*60, dt); return; }
+  const hq = buildings.find(b=>b.faction===u.faction&&b.type==='hq');
+  const tx = hq ? W - hq.x + (Math.random()-0.5)*150 : W/2+(Math.random()-0.5)*200;
+  const ty = hq ? H - hq.y + (Math.random()-0.5)*150 : H/2+(Math.random()-0.5)*200;
+  moveTo(u, tx, ty, dt);
 }
 
 // Logique combat unité militaire — NE PASSE JAMAIS À IDLE
@@ -989,9 +1000,7 @@ function doCombatUnit(u, dt) {
   let target = resolveTarget(u);
 
   if(!target){
-    let cx = W/2 + (Math.random()-0.5)*100;
-    let cy = H/2 + (Math.random()-0.5)*100;
-    moveTo(u, cx, cy, dt);
+    roamToEnemy(u, dt);
     u.state = 'attack';
     return;
   }
