@@ -364,11 +364,12 @@ function startGame() {
 }
 
 // ─── LOOP ─────────────────────────────────────────────────────────────────────
+let currentFps=60, _fpsSmooth=60;
 function loop(ts) {
   animFrame=requestAnimationFrame(loop);
   let rawDt=Math.min((ts-lastTime)/1000,0.05); lastTime=ts;
   fpsCount++; fpsTimer+=rawDt;
-  if(fpsTimer>=1){document.getElementById('fpsEl').textContent=fpsCount+' FPS';fpsCount=0;fpsTimer=0;}
+  if(fpsTimer>=1){currentFps=fpsCount;_fpsSmooth=_fpsSmooth*0.7+currentFps*0.3;document.getElementById('fpsEl').textContent=fpsCount+' FPS';fpsCount=0;fpsTimer=0;}
   if(!gameRunning) return;
   // Subdivise en petits pas pour éviter les sauts à haute vitesse
   const totalDt=rawDt*speed;
@@ -393,6 +394,7 @@ function pad(n){return String(n).padStart(2,'0');}
 
 // ─── UPDATE ───────────────────────────────────────────────────────────────────
 function updateGame(dt) {
+  clearStepCache();
   // Buildings
   for(let b of buildings) {
     if(b.buildProgress<1) continue;
@@ -541,11 +543,18 @@ function activeEnemyBuildings(fid){return buildings.filter(b=>b.faction!==fid&&b
 // ─── SYSTÈME DE VISION IA ─────────────────────────────────────────────────────
 const VISION_RADIUS = { worker:90, soldier:130, viking:140, tank:160, hq:160, depot:100, barracks:110, factory:110, starport:110, medivac:140, turret:100 };
 
-// Retourne tous les points de vision (x,y,r) d'une faction
+// Cache par step — vidé au début de chaque updateGame/updateGameHeadless
+let _stepCache = {};
+function clearStepCache(){ _stepCache = {}; }
+
+// Retourne tous les points de vision (x,y,r) d'une faction — mis en cache
 function getVisionCircles(fid){
+  if(_stepCache.vc && _stepCache.vc[fid]) return _stepCache.vc[fid];
   let circles=[];
   for(let u of units) if(u.faction===fid) circles.push({x:u.x,y:u.y,r:VISION_RADIUS[u.type]||100});
   for(let b of buildings) if(b.faction===fid&&b.buildProgress>=1) circles.push({x:b.x,y:b.y,r:VISION_RADIUS[b.type]||100});
+  if(!_stepCache.vc) _stepCache.vc={};
+  _stepCache.vc[fid]=circles;
   return circles;
 }
 
@@ -555,24 +564,27 @@ function isVisible(fid,x,y){
   return false;
 }
 
-// Ennemis visibles (unités)
+// Ennemis visibles (unités) — mis en cache par step
 function visibleEnemyUnits(fid){
-  return activeEnemyUnits(fid).filter(v=>isVisible(fid,v.x,v.y));
+  if(_stepCache.veu && _stepCache.veu[fid]) return _stepCache.veu[fid];
+  const result = activeEnemyUnits(fid).filter(v=>isVisible(fid,v.x,v.y));
+  if(!_stepCache.veu) _stepCache.veu={};
+  _stepCache.veu[fid]=result;
+  return result;
 }
 
-// Bâtiments ennemis visibles — une fois découvert, reste dans la "mémoire" de la faction
+// Bâtiments ennemis visibles — mis en cache + mémorisés une fois découverts
 function visibleEnemyBuildings(fid){
-  // Les bâtiments découverts sont mémorisés (ils ne bougent pas)
-  // On les révèle quand une unité passe dessus, ils restent connus jusqu'à destruction
+  if(_stepCache.veb && _stepCache.veb[fid]) return _stepCache.veb[fid];
   let known = factions[fid]?.knownEnemyBuildings || new Set();
   let result = [];
   for(let b of activeEnemyBuildings(fid)){
-    if(isVisible(fid,b.x,b.y)){
-      known.add(b.id);
-    }
+    if(isVisible(fid,b.x,b.y)) known.add(b.id);
     if(known.has(b.id)) result.push(b);
   }
   if(factions[fid]) factions[fid].knownEnemyBuildings = known;
+  if(!_stepCache.veb) _stepCache.veb={};
+  _stepCache.veb[fid]=result;
   return result;
 }
 
@@ -906,11 +918,23 @@ function doViking(u, dt){
 // sinon vers le quadrant opposé au HQ allié (jamais le centre fixe).
 function roamToEnemy(u, dt) {
   const eb = visibleEnemyBuildings(u.faction);
-  if(eb.length) { moveTo(u, eb[0].x+(Math.random()-0.5)*60, eb[0].y+(Math.random()-0.5)*60, dt); return; }
-  const hq = buildings.find(b=>b.faction===u.faction&&b.type==='hq');
-  const tx = hq ? W - hq.x + (Math.random()-0.5)*150 : W/2+(Math.random()-0.5)*200;
-  const ty = hq ? H - hq.y + (Math.random()-0.5)*150 : H/2+(Math.random()-0.5)*200;
-  moveTo(u, tx, ty, dt);
+  if(eb.length) {
+    // Recompute target only if building moved significantly or no target yet
+    if(!u._roamTarget || Math.hypot(u._roamTarget.bx-eb[0].x, u._roamTarget.by-eb[0].y) > 80) {
+      u._roamTarget = {x:eb[0].x+(Math.random()-0.5)*60, y:eb[0].y+(Math.random()-0.5)*60, bx:eb[0].x, by:eb[0].y};
+    }
+    moveTo(u, u._roamTarget.x, u._roamTarget.y, dt);
+    return;
+  }
+  // Pick a new random destination only on arrival or first call
+  if(!u._roamTarget || Math.hypot(u.x-u._roamTarget.x, u.y-u._roamTarget.y) < TILE*2) {
+    const hq = buildings.find(b=>b.faction===u.faction&&b.type==='hq');
+    u._roamTarget = {
+      x: hq ? W - hq.x + (Math.random()-0.5)*150 : W/2+(Math.random()-0.5)*200,
+      y: hq ? H - hq.y + (Math.random()-0.5)*150 : H/2+(Math.random()-0.5)*200
+    };
+  }
+  moveTo(u, u._roamTarget.x, u._roamTarget.y, dt);
 }
 
 // Logique combat unité militaire — NE PASSE JAMAIS À IDLE
@@ -1267,18 +1291,18 @@ function moveTo(u,tx,ty,dt){
   if(isAirUnit(u)){u.angle=Math.atan2(dy0,dx0);moveUnit(u,u.angle,spd,dt);return;}
   // Détection blocage : si l'unité n'a pas avancé de >1 tuile en 1s → forcer recalcul
   u._stuckT=(u._stuckT||0)+dt;
-  if(u._stuckT>=1.0){
+  if(u._stuckT>=2.0){
     const moved=Math.hypot(u.x-(u._stuckX??u.x),u.y-(u._stuckY??u.y));
     if(moved<TILE){u.path=[];u.pathTarget=null;}
     u._stuckX=u.x;u._stuckY=u.y;u._stuckT=0;
   }
   // Recomputer si destination changée ou timer expiré
   u.pathTimer=(u.pathTimer||0)-dt;
-  const destChanged=!u.pathTarget||Math.hypot(tx-u.pathTarget.x,ty-u.pathTarget.y)>TILE*3;
+  const destChanged=!u.pathTarget||Math.hypot(tx-u.pathTarget.x,ty-u.pathTarget.y)>TILE*4;
   if(destChanged||!u.path||u.path.length===0||u.pathTimer<=0){
     u.path=aStar(u.x,u.y,tx,ty)||[];
     u.pathTarget={x:tx,y:ty};
-    u.pathTimer=2;
+    u.pathTimer=3;
   }
   // Avancer vers le prochain waypoint (seuil plus large pour éviter l'oscillation)
   while(u.path.length>0&&Math.hypot(u.path[0].x-u.x,u.path[0].y-u.y)<TILE*1.2) u.path.shift();
@@ -1320,13 +1344,17 @@ function damageEntity(target, dmg, attacker=null) {
   return false;
 }
 
+const MAX_PARTICLES = 250;
 function spawnBullet(x,y,tx,ty,fid){
+  if(particles.length >= MAX_PARTICLES) return;
   let dx=tx-x,dy=ty-y,d=Math.hypot(dx,dy)||1,spd=280;
   let col=FACTION_DEFS.find(f=>f.id===fid)?.color||'#fff';
   particles.push({x,y,vx:(dx/d)*spd,vy:(dy/d)*spd,life:d/spd,maxLife:d/spd,color:col,type:'bullet',size:2.5});
 }
 function spawnExplosion(x,y,color){
-  for(let i=0;i<14;i++){let a=Math.random()*Math.PI*2,spd=60+Math.random()*120;particles.push({x,y,vx:Math.cos(a)*spd,vy:Math.sin(a)*spd,life:0.5+Math.random()*0.4,maxLife:0.9,color,type:'spark',size:2+Math.random()*3});}
+  if(particles.length >= MAX_PARTICLES) return;
+  const count = particles.length > MAX_PARTICLES*0.7 ? 6 : 14;
+  for(let i=0;i<count;i++){let a=Math.random()*Math.PI*2,spd=60+Math.random()*120;particles.push({x,y,vx:Math.cos(a)*spd,vy:Math.sin(a)*spd,life:0.5+Math.random()*0.4,maxLife:0.9,color,type:'spark',size:2+Math.random()*3});}
 }
 
 // ─── IA STRATÉGIQUE ───────────────────────────────────────────────────────────
@@ -1529,10 +1557,12 @@ function runAI(fid,dt) {
       let d2=Math.hypot(s.x-(ai.rallyX||hq.x),s.y-(ai.rallyY||hq.y));
       return Math.max(max,d2);
     },0);
-    if(dispersal > 200 && soldiers.length >= 5){
-      // Trop dispersé → rallier avant d'attaquer
-      soldiers.forEach(s=>{s.tx=ai.rallyX; s.ty=ai.rallyY; s.state='attack';});
-      ai.attackTimer = 4; ai.phase='expand';
+    const dispersalThreshold = 150 + soldiers.length * 30; // 5 soldats→300px, 20→750px
+    if(dispersal > dispersalThreshold && soldiers.length >= 5){
+      // Trop dispersé → forcer le rassemblement au point de ralliement
+      const rx = ai.rallyX || hq.x, ry = ai.rallyY || hq.y;
+      soldiers.forEach(s=>{ s.target=null; s._roamTarget={x:rx+(Math.random()-0.5)*60, y:ry+(Math.random()-0.5)*60}; s.state='attack'; });
+      ai.attackTimer = 6; ai.phase='expand';
       log(`${f.name} — Regroupement (dispersal=${Math.round(dispersal)}px)`,fid);
       return;
     }
@@ -1709,7 +1739,9 @@ function adaptParams(fid,agent,place){
 }
 
 // ─── RENDER ───────────────────────────────────────────────────────────────────
+let _lowQuality = false;
 function render(){
+  _lowQuality = _fpsSmooth < 40;
   ctx.fillStyle='#050a0f'; ctx.fillRect(0,0,W,H);
   drawMap(); drawResources(); drawBuildings(); drawUnits(); drawParticles();
   if(fogFaction) drawFog(fogFaction);
@@ -1920,7 +1952,7 @@ function drawUnits(){
     let fd=FACTION_DEFS.find(f=>f.id===u.faction), col=fd?.color||'#fff';
     ctx.save(); ctx.translate(u.x,u.y); ctx.rotate(u.angle);
     ctx.globalAlpha=u.type==='worker'?0.75: u.state==='retreat'?0.5 :1;
-    ctx.shadowBlur=u.type==='tank'?10:5; ctx.shadowColor=col; ctx.fillStyle=col;
+    ctx.shadowBlur=_lowQuality?0:(u.type==='tank'?10:5); ctx.shadowColor=col; ctx.fillStyle=col;
     if(u.type==='worker'){
       ctx.fillRect(-u.size/2,-u.size/2,u.size,u.size);
       if(u.carrying>0){ctx.shadowBlur=0;ctx.fillStyle='#ffd700';ctx.beginPath();ctx.arc(0,-u.size,2,0,Math.PI*2);ctx.fill();}
@@ -1959,7 +1991,7 @@ function drawUnits(){
       continue;
     } else if(u.type==='marauder'){
       // Halo stim
-      if(u.stimActive){ ctx.shadowBlur=18; ctx.shadowColor='#fff'; }
+      if(u.stimActive){ ctx.shadowBlur=_lowQuality?0:18; ctx.shadowColor='#fff'; }
       // Corps trapu : hexagone aplati
       ctx.beginPath();
       ctx.moveTo(u.size*1.2, 0);
@@ -1973,7 +2005,7 @@ function drawUnits(){
       ctx.shadowBlur=0; ctx.strokeStyle=u.stimActive?'rgba(255,255,255,0.9)':'rgba(255,255,255,0.4)'; ctx.lineWidth=1.5;
       ctx.stroke();
     } else if(u.type==='marine'){
-      if(u.stimActive){ ctx.shadowBlur=14; ctx.shadowColor='#fff'; }
+      if(u.stimActive){ ctx.shadowBlur=_lowQuality?0:14; ctx.shadowColor='#fff'; }
       ctx.beginPath();ctx.moveTo(u.size,0);ctx.lineTo(-u.size/2,-u.size/2);ctx.lineTo(-u.size/2,u.size/2);ctx.closePath();ctx.fill();
       ctx.shadowBlur=0;
     } else if(u.type==='hellion'){
@@ -2042,7 +2074,7 @@ function drawUnits(){
 
 function drawParticles(){
   for(let p of particles){
-    ctx.save();ctx.globalAlpha=p.life/p.maxLife;ctx.fillStyle=p.color;ctx.shadowBlur=p.type==='bullet'?6:3;ctx.shadowColor=p.color;
+    ctx.save();ctx.globalAlpha=p.life/p.maxLife;ctx.fillStyle=p.color;ctx.shadowBlur=_lowQuality?0:(p.type==='bullet'?6:3);ctx.shadowColor=p.color;
     ctx.beginPath();ctx.arc(p.x,p.y,p.type==='bullet'?p.size:p.size*(p.life/p.maxLife),0,Math.PI*2);ctx.fill();ctx.restore();
   }
 }
@@ -2487,6 +2519,7 @@ function startSimulation(totalGames){
 
 // Version headless de updateGame (sans particules ni log DOM)
 function updateGameHeadless(dt){
+  clearStepCache();
   for(let b of buildings){
     if(b.buildProgress<1) continue;
     const f=factions[b.faction]; if(!f||f.eliminated) continue;
