@@ -258,10 +258,10 @@ function generateMap() {
     {cx:Math.floor(W*0.92/TILE),cy:Math.floor(H*0.10/TILE)},
     {cx:Math.floor(W*0.92/TILE),cy:Math.floor(H*0.90/TILE)},
     {cx:Math.floor(W*0.08/TILE),cy:Math.floor(H*0.90/TILE)},
-    {cx:Math.floor(W*0.38/TILE),cy:Math.floor(H*0.35/TILE)},
-    {cx:Math.floor(W*0.62/TILE),cy:Math.floor(H*0.35/TILE)},
-    {cx:Math.floor(W*0.38/TILE),cy:Math.floor(H*0.65/TILE)},
-    {cx:Math.floor(W*0.62/TILE),cy:Math.floor(H*0.65/TILE)},
+    {cx:Math.floor(W*0.22/TILE),cy:Math.floor(H*0.22/TILE)},
+    {cx:Math.floor(W*0.78/TILE),cy:Math.floor(H*0.22/TILE)},
+    {cx:Math.floor(W*0.22/TILE),cy:Math.floor(H*0.78/TILE)},
+    {cx:Math.floor(W*0.78/TILE),cy:Math.floor(H*0.78/TILE)},
   ];
   rclears.forEach(({cx,cy})=>{
     for(let dy=-5;dy<=6;dy++) for(let dx=-5;dx<=5;dx++){
@@ -307,7 +307,7 @@ function spawnResources() {
   // ── Clusters centraux (inchangés) ──
   const S=20;
   const offs=[{dx:-S,dy:-S},{dx:S,dy:-S},{dx:-S,dy:0},{dx:S,dy:0},{dx:-S,dy:S},{dx:S,dy:S}];
-  [{cx:W*0.38,cy:H*0.35},{cx:W*0.62,cy:H*0.35},{cx:W*0.38,cy:H*0.65},{cx:W*0.62,cy:H*0.65}]
+  [{cx:W*0.22,cy:H*0.22},{cx:W*0.78,cy:H*0.22},{cx:W*0.22,cy:H*0.78},{cx:W*0.78,cy:H*0.78}]
   .forEach(c=>{
     offs.forEach(o=>addR(c.cx+o.dx,c.cy+o.dy,'mineral'));
     addR(c.cx-8,c.cy+30,'vespene'); addR(c.cx+8,c.cy+30,'vespene');
@@ -429,10 +429,11 @@ function updateGame(dt) {
         if(f.stimResearchTimer<=0){f.stimResearched=true;f.stimResearching=false;log(`${f.name} — ⚡ STIMULANT actif ! (+50% marines+marauders)`,b.faction);}
       }
       // ── Spawn ──
+      if(f.resources>300&&b.spawnTimer>1) b.spawnTimer=1; // flush si surplus
       b.spawnTimer-=dt;
       if(b.spawnTimer<=0){
         let infantry=myUnits(b.faction).filter(u=>u.type==='marine'||u.type==='marauder');
-        if(infantry.length<18){
+        if(infantry.length<30){
           let canMarauder=b.module==='techlab';
           let marauders=infantry.filter(u=>u.type==='marauder').length;
           let marines2=infantry.filter(u=>u.type==='marine').length;
@@ -442,12 +443,13 @@ function updateGame(dt) {
           if(f.resources>=cost&&f.vespene>=costVesp){
             f.resources-=cost;f.vespene-=costVesp;
             for(let i=0;i<count;i++) units.push(makeUnit(b.faction,spawnType,b.x+(Math.random()-0.5)*30,b.y+(Math.random()-0.5)*30));
-            b.spawnTimer=spawnType==='marauder'?13:10;
+            b.spawnTimer=spawnType==='marauder'?9:7;
           } else b.spawnTimer=4;
         } else b.spawnTimer=4;
       }
     }
     if(b.type==='factory'){
+      if(f.resources>300&&b.spawnTimer>1) b.spawnTimer=1; // flush si surplus
       b.spawnTimer-=dt;
       if(b.spawnTimer<=0){
         let vt=myUnits(b.faction).filter(u=>u.type==='tank').length;
@@ -456,7 +458,7 @@ function updateGame(dt) {
         // Décision IA : hélions si beaucoup d'unités légères ennemies ou déséquilibre, tanks sinon
         let buildHellion = vh<4 && (enemyLight>3 || vh<vt);
         if(buildHellion&&f.resources>=100){f.resources-=100;units.push(makeUnit(b.faction,'hellion',b.x+(Math.random()-0.5)*30,b.y+(Math.random()-0.5)*30));b.spawnTimer=15;}
-        else if(vt<6&&f.resources>=150&&f.vespene>=100){f.resources-=150;f.vespene-=100;units.push(makeUnit(b.faction,'tank',b.x+(Math.random()-0.5)*30,b.y+(Math.random()-0.5)*30));b.spawnTimer=22;}
+        else if(vt<10&&f.resources>=150&&f.vespene>=100){f.resources-=150;f.vespene-=100;units.push(makeUnit(b.faction,'tank',b.x+(Math.random()-0.5)*30,b.y+(Math.random()-0.5)*30));b.spawnTimer=22;}
         else b.spawnTimer=4;
       }
     }
@@ -1474,12 +1476,12 @@ function runAI(fid,dt) {
     // Réponse adaptative : si hint anti-tank → plus de casernes ; si anti-inf → plus d'usines
     else if(ai.compositionHint==='marauder'&&barracks<4&&res>=costBar) toBuild='barracks';
     else if(ai.compositionHint==='tank'&&factories<3&&res>=costFac&&vesp>=BUILDING_TYPES.factory.costVespene) toBuild='factory';
-    else if(res>=costBar*4&&barracks<3) toBuild='barracks';
-    else if(res>=costFac*2.5&&factories<2&&barracks>=1) toBuild='factory';
-    else if(res>=costBar*7&&barracks<4) toBuild='barracks';
-    else if(res>=costFac*4&&factories<3&&barracks>=2) toBuild='factory';
-    else if(res>=costBar*12&&barracks<5) toBuild='barracks';
-    else if(res>=costFac*7.5&&factories<4&&barracks>=3) toBuild='factory';
+    else if(res>=costBar*2&&barracks<3) toBuild='barracks';
+    else if(res>=costFac*1.5&&factories<2&&barracks>=1) toBuild='factory';
+    else if(res>=costBar*3.5&&barracks<4) toBuild='barracks';
+    else if(res>=costFac*2.5&&factories<3&&barracks>=2) toBuild='factory';
+    else if(res>=costBar*5&&barracks<5) toBuild='barracks';
+    else if(res>=costFac*4&&factories<4&&barracks>=3) toBuild='factory';
     else if(p.expansionDrive>0.4&&depots<2&&res>=costDep*2) toBuild='depot';
     else if(depots<3&&res>=costDep*4) toBuild='depot';
 
@@ -2584,10 +2586,11 @@ function updateGameHeadless(dt){
         if(f.stimResearchTimer<=0){f.stimResearched=true;f.stimResearching=false;log(`${f.name} — ⚡ STIMULANT actif ! (+50% marines+marauders)`,b.faction);}
       }
       // ── Spawn ──
+      if(f.resources>300&&b.spawnTimer>1) b.spawnTimer=1; // flush si surplus
       b.spawnTimer-=dt;
       if(b.spawnTimer<=0){
         let infantry=myUnits(b.faction).filter(u=>u.type==='marine'||u.type==='marauder');
-        if(infantry.length<18){
+        if(infantry.length<30){
           let canMarauder=b.module==='techlab';
           let marauders=infantry.filter(u=>u.type==='marauder').length;
           let marines2=infantry.filter(u=>u.type==='marine').length;
@@ -2597,12 +2600,13 @@ function updateGameHeadless(dt){
           if(f.resources>=cost&&f.vespene>=costVesp){
             f.resources-=cost;f.vespene-=costVesp;
             for(let i=0;i<count;i++) units.push(makeUnit(b.faction,spawnType,b.x+(Math.random()-0.5)*30,b.y+(Math.random()-0.5)*30));
-            b.spawnTimer=spawnType==='marauder'?13:10;
+            b.spawnTimer=spawnType==='marauder'?9:7;
           } else b.spawnTimer=4;
         } else b.spawnTimer=4;
       }
     }
     if(b.type==='factory'){
+      if(f.resources>300&&b.spawnTimer>1) b.spawnTimer=1; // flush si surplus
       b.spawnTimer-=dt;
       if(b.spawnTimer<=0){
         let vt=myUnits(b.faction).filter(u=>u.type==='tank').length;
@@ -2611,7 +2615,7 @@ function updateGameHeadless(dt){
         // Décision IA : hélions si beaucoup d'unités légères ennemies ou déséquilibre, tanks sinon
         let buildHellion = vh<4 && (enemyLight>3 || vh<vt);
         if(buildHellion&&f.resources>=100){f.resources-=100;units.push(makeUnit(b.faction,'hellion',b.x+(Math.random()-0.5)*30,b.y+(Math.random()-0.5)*30));b.spawnTimer=15;}
-        else if(vt<6&&f.resources>=150&&f.vespene>=100){f.resources-=150;f.vespene-=100;units.push(makeUnit(b.faction,'tank',b.x+(Math.random()-0.5)*30,b.y+(Math.random()-0.5)*30));b.spawnTimer=22;}
+        else if(vt<10&&f.resources>=150&&f.vespene>=100){f.resources-=150;f.vespene-=100;units.push(makeUnit(b.faction,'tank',b.x+(Math.random()-0.5)*30,b.y+(Math.random()-0.5)*30));b.spawnTimer=22;}
         else b.spawnTimer=4;
       }
     }
