@@ -200,6 +200,14 @@ const BUILDING_TYPES = {
   turret:    {hp:150, size:16, cost:75,  costVespene:0,  label:'TUR', attack:18, range:120},
 };
 
+const UNIT_SUPPLY = { worker:1, marine:1, marauder:2, hellion:2, tank:4, medivac:2, viking:2 };
+const BASE_SUPPLY = 16;   // supply de base (HQ)
+const DEPOT_SUPPLY = 10;  // supply par dépôt
+
+function usedSupply(fid){ return myUnits(fid).reduce((s,u)=>s+(UNIT_SUPPLY[u.type]||1),0); }
+function maxSupply(fid){ return BASE_SUPPLY + myBuildings(fid).filter(b=>b.type==='depot'&&b.buildProgress>=1).length*DEPOT_SUPPLY; }
+function canAffordSupply(fid, type){ return usedSupply(fid)+(UNIT_SUPPLY[type]||1) <= maxSupply(fid); }
+
 // ─── CANVAS & MAP ─────────────────────────────────────────────────────────────
 function resize() {
   W=canvas.clientWidth; H=canvas.clientHeight;
@@ -412,7 +420,7 @@ function updateGame(dt) {
       if(b.spawnTimer<=0){
         if(b.type==='hq'){
           let w=myUnits(b.faction).filter(u=>u.type==='worker').length;
-          if(w<10&&f.resources>=50){f.resources-=50;units.push(makeUnit(b.faction,'worker',b.x+(Math.random()-0.5)*40,b.y+(Math.random()-0.5)*40));b.spawnTimer=20;}
+          if(w<10&&f.resources>=50&&canAffordSupply(b.faction,'worker')){f.resources-=50;units.push(makeUnit(b.faction,'worker',b.x+(Math.random()-0.5)*40,b.y+(Math.random()-0.5)*40));b.spawnTimer=20;}
           else b.spawnTimer=4;
         } else b.spawnTimer=999;
       }
@@ -440,7 +448,8 @@ function updateGame(dt) {
           let spawnType=(canMarauder&&marines2>=marauders*2)?'marauder':'marine';
           let count=(spawnType==='marine'&&b.module==='reactor')?2:1;
           let cost=spawnType==='marauder'?50:50*count, costVesp=spawnType==='marauder'?20:0;
-          if(f.resources>=cost&&f.vespene>=costVesp){
+          let supplyCost=(UNIT_SUPPLY[spawnType]||1)*count;
+          if(f.resources>=cost&&f.vespene>=costVesp&&usedSupply(b.faction)+supplyCost<=maxSupply(b.faction)){
             f.resources-=cost;f.vespene-=costVesp;
             for(let i=0;i<count;i++) units.push(makeUnit(b.faction,spawnType,b.x+(Math.random()-0.5)*30,b.y+(Math.random()-0.5)*30));
             b.spawnTimer=spawnType==='marauder'?9:7;
@@ -457,8 +466,8 @@ function updateGame(dt) {
         let enemyLight=visibleEnemyUnits(b.faction).filter(v=>UNIT_TYPES[v.type]?.light&&!isAirUnit(v)).length;
         // Décision IA : hélions si beaucoup d'unités légères ennemies ou déséquilibre, tanks sinon
         let buildHellion = vh<4 && (enemyLight>3 || vh<vt);
-        if(buildHellion&&f.resources>=100){f.resources-=100;units.push(makeUnit(b.faction,'hellion',b.x+(Math.random()-0.5)*30,b.y+(Math.random()-0.5)*30));b.spawnTimer=15;}
-        else if(vt<10&&f.resources>=150&&f.vespene>=100){f.resources-=150;f.vespene-=100;units.push(makeUnit(b.faction,'tank',b.x+(Math.random()-0.5)*30,b.y+(Math.random()-0.5)*30));b.spawnTimer=22;}
+        if(buildHellion&&f.resources>=100&&canAffordSupply(b.faction,'hellion')){f.resources-=100;units.push(makeUnit(b.faction,'hellion',b.x+(Math.random()-0.5)*30,b.y+(Math.random()-0.5)*30));b.spawnTimer=15;}
+        else if(vt<10&&f.resources>=150&&f.vespene>=100&&canAffordSupply(b.faction,'tank')){f.resources-=150;f.vespene-=100;units.push(makeUnit(b.faction,'tank',b.x+(Math.random()-0.5)*30,b.y+(Math.random()-0.5)*30));b.spawnTimer=22;}
         else b.spawnTimer=4;
       }
     }
@@ -485,8 +494,8 @@ function updateGame(dt) {
         } else if(vk<2){
           buildViking=true;                        // anti-air par défaut si sous le cap
         }
-        if(buildViking&&f.resources>=100&&f.vespene>=75){f.resources-=100;f.vespene-=75;units.push(makeUnit(b.faction,'viking',b.x+(Math.random()-0.5)*30,b.y+(Math.random()-0.5)*30));b.spawnTimer=25;}
-        else if(buildMedivac&&f.resources>=100&&f.vespene>=100){f.resources-=100;f.vespene-=100;units.push(makeUnit(b.faction,'medivac',b.x+(Math.random()-0.5)*30,b.y+(Math.random()-0.5)*30));b.spawnTimer=28;}
+        if(buildViking&&f.resources>=100&&f.vespene>=75&&canAffordSupply(b.faction,'viking')){f.resources-=100;f.vespene-=75;units.push(makeUnit(b.faction,'viking',b.x+(Math.random()-0.5)*30,b.y+(Math.random()-0.5)*30));b.spawnTimer=25;}
+        else if(buildMedivac&&f.resources>=100&&f.vespene>=100&&canAffordSupply(b.faction,'medivac')){f.resources-=100;f.vespene-=100;units.push(makeUnit(b.faction,'medivac',b.x+(Math.random()-0.5)*30,b.y+(Math.random()-0.5)*30));b.spawnTimer=28;}
         else b.spawnTimer=4;
       }
     }
@@ -1467,7 +1476,10 @@ function runAI(fid,dt) {
     const starports=myB.filter(b=>b.type==='starport').length;
 
     let toBuild=null;
-    if(barracks<1&&res>=costBar) toBuild='barracks';
+    // Supply saturée → dépôt en priorité absolue
+    const supplyUsed=usedSupply(fid), supplyMax=maxSupply(fid);
+    if(supplyUsed>=supplyMax*0.75&&depots<8&&res>=costDep) toBuild='depot';
+    else if(barracks<1&&res>=costBar) toBuild='barracks';
     else if(factories<1&&res>=costFac&&barracks>=1&&soldiers.length>=3) toBuild='factory';
     // Starport dès que vespène disponible
     else if(starports<1&&res>=BUILDING_TYPES.starport.cost&&vesp>=BUILDING_TYPES.starport.costVespene&&factories>=1) toBuild='starport';
@@ -1482,8 +1494,8 @@ function runAI(fid,dt) {
     else if(res>=costFac*2.5&&factories<3&&barracks>=2) toBuild='factory';
     else if(res>=costBar*5&&barracks<5) toBuild='barracks';
     else if(res>=costFac*4&&factories<4&&barracks>=3) toBuild='factory';
-    else if(p.expansionDrive>0.4&&depots<2&&res>=costDep*2) toBuild='depot';
-    else if(depots<3&&res>=costDep*4) toBuild='depot';
+    else if(p.expansionDrive>0.4&&depots<8&&res>=costDep*2) toBuild='depot';
+    else if(depots<8&&res>=costDep*4) toBuild='depot';
 
     if(toBuild){
       let worker=workers.find(w=>w.state==='idle'||w.state==='harvest');
@@ -2119,7 +2131,7 @@ function buildHUD(){
     let ag=agentMemory.agents[fd.id];
     return `<div class="faction-card" id="card-${fd.id}" style="border-color:${fd.color}33;color:${fd.color}">
       <div class="fname">${fd.name}</div>
-      <div class="fstats"><span>🏗<span id="hb-${fd.id}">0</span></span><span>⚔<span id="hu-${fd.id}">0</span></span><span>💎<span id="hr-${fd.id}">0</span></span><span style="color:#00ff88">◆<span id="hv-${fd.id}">0</span></span></div>
+      <div class="fstats"><span>🏗<span id="hb-${fd.id}">0</span></span><span>👥<span id="hs-${fd.id}">0</span>/<span id="hsm-${fd.id}">${BASE_SUPPLY}</span></span><span>💎<span id="hr-${fd.id}">0</span></span><span style="color:#00ff88">◆<span id="hv-${fd.id}">0</span></span></div>
       <div style="display:flex;gap:4px"><span class="phase-badge" id="hp-${fd.id}">ECO</span><span class="gen-badge">${ag.wins}W/${ag.totalGames}G</span></div>
     </div>`;
   }).join('');
@@ -2130,7 +2142,8 @@ function updateHUD(){
     let f=factions[fd.id]; if(!f) continue;
     let myB=myBuildings(fd.id),myU=myUnits(fd.id);
     document.getElementById('hb-'+fd.id).textContent=myB.length;
-    document.getElementById('hu-'+fd.id).textContent=myU.length;
+    let hs=document.getElementById('hs-'+fd.id); if(hs) hs.textContent=usedSupply(fd.id);
+    let hsm=document.getElementById('hsm-'+fd.id); if(hsm) hsm.textContent=maxSupply(fd.id);
     document.getElementById('hr-'+fd.id).textContent=Math.floor(f.resources);
     let hv=document.getElementById('hv-'+fd.id); if(hv) hv.textContent=Math.floor(f.vespene||0);
     let ph=document.getElementById('hp-'+fd.id);
@@ -2569,7 +2582,7 @@ function updateGameHeadless(dt){
       if(b.spawnTimer<=0){
         if(b.type==='hq'){
           let w=myUnits(b.faction).filter(u=>u.type==='worker').length;
-          if(w<10&&f.resources>=50){f.resources-=50;units.push(makeUnit(b.faction,'worker',b.x+(Math.random()-0.5)*40,b.y+(Math.random()-0.5)*40));b.spawnTimer=20;}
+          if(w<10&&f.resources>=50&&canAffordSupply(b.faction,'worker')){f.resources-=50;units.push(makeUnit(b.faction,'worker',b.x+(Math.random()-0.5)*40,b.y+(Math.random()-0.5)*40));b.spawnTimer=20;}
           else b.spawnTimer=4;
         } else b.spawnTimer=999;
       }
@@ -2597,7 +2610,8 @@ function updateGameHeadless(dt){
           let spawnType=(canMarauder&&marines2>=marauders*2)?'marauder':'marine';
           let count=(spawnType==='marine'&&b.module==='reactor')?2:1;
           let cost=spawnType==='marauder'?50:50*count, costVesp=spawnType==='marauder'?20:0;
-          if(f.resources>=cost&&f.vespene>=costVesp){
+          let supplyCost=(UNIT_SUPPLY[spawnType]||1)*count;
+          if(f.resources>=cost&&f.vespene>=costVesp&&usedSupply(b.faction)+supplyCost<=maxSupply(b.faction)){
             f.resources-=cost;f.vespene-=costVesp;
             for(let i=0;i<count;i++) units.push(makeUnit(b.faction,spawnType,b.x+(Math.random()-0.5)*30,b.y+(Math.random()-0.5)*30));
             b.spawnTimer=spawnType==='marauder'?9:7;
@@ -2614,8 +2628,8 @@ function updateGameHeadless(dt){
         let enemyLight=visibleEnemyUnits(b.faction).filter(v=>UNIT_TYPES[v.type]?.light&&!isAirUnit(v)).length;
         // Décision IA : hélions si beaucoup d'unités légères ennemies ou déséquilibre, tanks sinon
         let buildHellion = vh<4 && (enemyLight>3 || vh<vt);
-        if(buildHellion&&f.resources>=100){f.resources-=100;units.push(makeUnit(b.faction,'hellion',b.x+(Math.random()-0.5)*30,b.y+(Math.random()-0.5)*30));b.spawnTimer=15;}
-        else if(vt<10&&f.resources>=150&&f.vespene>=100){f.resources-=150;f.vespene-=100;units.push(makeUnit(b.faction,'tank',b.x+(Math.random()-0.5)*30,b.y+(Math.random()-0.5)*30));b.spawnTimer=22;}
+        if(buildHellion&&f.resources>=100&&canAffordSupply(b.faction,'hellion')){f.resources-=100;units.push(makeUnit(b.faction,'hellion',b.x+(Math.random()-0.5)*30,b.y+(Math.random()-0.5)*30));b.spawnTimer=15;}
+        else if(vt<10&&f.resources>=150&&f.vespene>=100&&canAffordSupply(b.faction,'tank')){f.resources-=150;f.vespene-=100;units.push(makeUnit(b.faction,'tank',b.x+(Math.random()-0.5)*30,b.y+(Math.random()-0.5)*30));b.spawnTimer=22;}
         else b.spawnTimer=4;
       }
     }
@@ -2642,8 +2656,8 @@ function updateGameHeadless(dt){
         } else if(vk<2){
           buildViking=true;                        // anti-air par défaut si sous le cap
         }
-        if(buildViking&&f.resources>=100&&f.vespene>=75){f.resources-=100;f.vespene-=75;units.push(makeUnit(b.faction,'viking',b.x+(Math.random()-0.5)*30,b.y+(Math.random()-0.5)*30));b.spawnTimer=25;}
-        else if(buildMedivac&&f.resources>=100&&f.vespene>=100){f.resources-=100;f.vespene-=100;units.push(makeUnit(b.faction,'medivac',b.x+(Math.random()-0.5)*30,b.y+(Math.random()-0.5)*30));b.spawnTimer=28;}
+        if(buildViking&&f.resources>=100&&f.vespene>=75&&canAffordSupply(b.faction,'viking')){f.resources-=100;f.vespene-=75;units.push(makeUnit(b.faction,'viking',b.x+(Math.random()-0.5)*30,b.y+(Math.random()-0.5)*30));b.spawnTimer=25;}
+        else if(buildMedivac&&f.resources>=100&&f.vespene>=100&&canAffordSupply(b.faction,'medivac')){f.resources-=100;f.vespene-=100;units.push(makeUnit(b.faction,'medivac',b.x+(Math.random()-0.5)*30,b.y+(Math.random()-0.5)*30));b.spawnTimer=28;}
         else b.spawnTimer=4;
       }
     }
