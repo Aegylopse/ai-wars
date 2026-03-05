@@ -277,7 +277,7 @@ function spawnResources() {
   resources=[];
 
   // ── Bases : arc de 6 minerais centré sur le HQ, orienté vers le coin ──
-  const R=60; // rayon de l'arc
+  const R=38; // rayon de l'arc
   const mineralHalf = Math.PI*0.58; // demi-angle minerais (~104°, total ~208°)
   const vespHalf    = Math.PI*0.72; // demi-angle vespène (~130°, total ~259°)
   function addR(x,y,type){
@@ -323,7 +323,7 @@ function makeUnit(fid,type,x,y) {
     energy: type==='medivac' ? UNIT_TYPES.medivac.maxEnergy : undefined,
     // Stimulant
     stimActive: false, stimTimer: 0, kiteTimer: 0, kiteAngle: 0,
-    path:[], pathTarget:null, pathTimer:0};
+    path:[], pathTarget:null, pathTimer:0, repairTarget:null};
 }
 function makeBuilding(fid,type,x,y) {
   const t=BUILDING_TYPES[type];
@@ -502,6 +502,7 @@ function updateGame(dt) {
       else if(u.state==='harvest') doHarvest(u,dt);
       else if(u.state==='attack')  doAttack(u,dt);
       else if(u.state==='build')   doBuild(u,dt);
+      else if(u.state==='repair')  doRepair(u,dt);
     } else if(u.type==='medivac'){
       doMedivac(u,dt);
     } else if(u.type==='viking'){
@@ -668,6 +669,18 @@ function doScout(u, dt){
 function assignWorkerTask(u) {
   let threat=findClosestInRange(visibleEnemyUnits(u.faction),u.x,u.y,55);
   if(threat){u.state='attack';u.target=threat.id;return;}
+  // Réparation : bâtiments < 85% PV ou mécaniques (tank/hellion) < 70% PV
+  const f = factions[u.faction];
+  if(f && f.resources > 20){
+    const alreadyRepairing = new Set(units.filter(w=>w.faction===u.faction&&w.state==='repair').map(w=>w.repairTarget));
+    const dmgB = buildings.filter(b=>b.faction===u.faction&&b.buildProgress>=1&&b.hp>0&&b.hp<b.maxHp*0.85&&!alreadyRepairing.has(b.id));
+    const dmgM = units.filter(v=>v.faction===u.faction&&(v.type==='tank'||v.type==='hellion')&&v.hp>0&&v.hp<v.maxHp*0.7&&!alreadyRepairing.has(v.id));
+    const candidates = [...dmgB, ...dmgM];
+    if(candidates.length){
+      const closest = candidates.reduce((a,b)=>Math.hypot(a.x-u.x,a.y-u.y)<Math.hypot(b.x-u.x,b.y-u.y)?a:b);
+      u.repairTarget=closest.id; u.state='repair'; return;
+    }
+  }
   let res=resources.filter(r=>r.amount>0&&r.workerCount<2);
   if(!res.length) res=resources.filter(r=>r.amount>0);
   if(res.length){
@@ -1135,6 +1148,24 @@ function pickCombatTarget(u) {
     if(close) return close;
   }
   return null;
+}
+
+function doRepair(u, dt) {
+  const target = units.find(v=>v.id===u.repairTarget) || buildings.find(b=>b.id===u.repairTarget);
+  if(!target || target.hp<=0 || target.hp>=target.maxHp || factions[target.faction]?.eliminated){
+    u.repairTarget=null; u.state='idle'; return;
+  }
+  let d=dist(u,target);
+  u.angle=Math.atan2(target.y-u.y,target.x-u.x);
+  if(d>14){ moveTo(u,target.x,target.y,dt); return; }
+  // Soigner : 15 PV/s, coût 0.1 minerai/PV
+  const f=factions[u.faction];
+  const hpToHeal=Math.min(15*dt, target.maxHp-target.hp);
+  const cost=hpToHeal*0.1;
+  if(f && f.resources>=cost){ target.hp+=hpToHeal; f.resources-=cost; }
+  // Interrompre si menace proche
+  let threat=findClosestInRange(visibleEnemyUnits(u.faction),u.x,u.y,45);
+  if(threat){ u.repairTarget=null; u.state='attack'; u.target=threat.id; }
 }
 
 function doHarvest(u,dt) {
@@ -2623,6 +2654,7 @@ function updateGameHeadless(dt){
       else if(u.state==='harvest') doHarvest(u,dt);
       else if(u.state==='attack') doAttack(u,dt);
       else if(u.state==='build') doBuild(u,dt);
+      else if(u.state==='repair') doRepair(u,dt);
     } else if(u.type==='medivac'){
       doMedivac(u,dt);
     } else if(u.type==='viking'){
