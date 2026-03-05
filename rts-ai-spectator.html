@@ -184,9 +184,9 @@ let resourceHistory={}, lastResourceSample=0;
 
 const UNIT_TYPES = {
   worker:   {hp:40,  speed:0.6,  attack:3,  range:5,  size:4},
-  marine:   {hp:50,  speed:0.9,  attack:12, range:35, size:5, light:true},
-  marauder: {hp:80,  speed:0.7,  attack:20, range:38, size:6, armored:true},
-  tank:     {hp:220, speed:0.45, attack:20, siegeAttack:45, range:55, size:7},
+  marine:   {hp:50,  speed:0.9,  attack:10, range:35, size:5, light:true},
+  marauder: {hp:80,  speed:0.7,  attack:24, range:38, size:6, armored:true},
+  tank:     {hp:220, speed:0.45, attack:20, siegeAttack:45, range:55, siegeRange:120, size:7},
   medivac:  {hp:120, speed:1.1,  attack:0,  range:100, size:6, healRate:15, cargoMax:4, maxEnergy:100, energyDrain:20, energyRegen:10, light:true},
   viking:   {hp:80,  speed:0.65, airSpeed:1.05, attack:14, airAttack:18, range:35, size:5},
   hellion:  {hp:90,  speed:1.2,  attack:8,  range:28, size:5, lightBonus:2},
@@ -197,7 +197,7 @@ const BUILDING_TYPES = {
   barracks:  {hp:200, size:20, cost:150, costVespene:0,  label:'BAR'},
   factory:   {hp:250, size:22, cost:150, costVespene:75, label:'FAC'},
   starport:  {hp:200, size:22, cost:100, costVespene:100,label:'STP'},
-  turret:    {hp:150, size:16, cost:75,  costVespene:0,  label:'TUR', attack:18, range:90},
+  turret:    {hp:150, size:16, cost:75,  costVespene:0,  label:'TUR', attack:18, range:120},
 };
 
 // ─── CANVAS & MAP ─────────────────────────────────────────────────────────────
@@ -436,7 +436,7 @@ function updateGame(dt) {
           let marines2=infantry.filter(u=>u.type==='marine').length;
           let spawnType=(canMarauder&&marines2>=marauders*2)?'marauder':'marine';
           let count=(spawnType==='marine'&&b.module==='reactor')?2:1;
-          let cost=spawnType==='marauder'?75:50*count, costVesp=spawnType==='marauder'?25:0;
+          let cost=spawnType==='marauder'?50:50*count, costVesp=spawnType==='marauder'?20:0;
           if(f.resources>=cost&&f.vespene>=costVesp){
             f.resources-=cost;f.vespene-=costVesp;
             for(let i=0;i<count;i++) units.push(makeUnit(b.faction,spawnType,b.x+(Math.random()-0.5)*30,b.y+(Math.random()-0.5)*30));
@@ -941,7 +941,7 @@ function doCombatUnit(u, dt) {
       return;
     }
 
-    const baseSiegeRange = UNIT_TYPES.tank.range * 3;
+    const baseSiegeRange = UNIT_TYPES.tank.siegeRange;
 
     if(u.siegeMode === 'siege'){
       // En siège : tir en zone, portée ×4, immobile
@@ -1004,7 +1004,7 @@ function doCombatUnit(u, dt) {
 
   if(d > u.range){
     // Si c'est un tank et la cible est à portée siège → déployer
-    if(isTank && d <= UNIT_TYPES.tank.range * 3){
+    if(isTank && d <= UNIT_TYPES.tank.siegeRange){
       u.siegeMode = 'deploying'; u.siegeTimer = 2; return;
     }
     moveTo(u, target.x, target.y, dt);
@@ -2520,7 +2520,7 @@ function updateGameHeadless(dt){
           let marines2=infantry.filter(u=>u.type==='marine').length;
           let spawnType=(canMarauder&&marines2>=marauders*2)?'marauder':'marine';
           let count=(spawnType==='marine'&&b.module==='reactor')?2:1;
-          let cost=spawnType==='marauder'?75:50*count, costVesp=spawnType==='marauder'?25:0;
+          let cost=spawnType==='marauder'?50:50*count, costVesp=spawnType==='marauder'?20:0;
           if(f.resources>=cost&&f.vespene>=costVesp){
             f.resources-=cost;f.vespene-=costVesp;
             for(let i=0;i<count;i++) units.push(makeUnit(b.faction,spawnType,b.x+(Math.random()-0.5)*30,b.y+(Math.random()-0.5)*30));
