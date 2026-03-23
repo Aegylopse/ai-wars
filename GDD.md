@@ -22,7 +22,7 @@
 |---|---|---|---|---|---|
 | QG | HQ | — | — | 600 | Base principale ; produit les Workers |
 | Dépôt | DEP | 100 | — | 300 | Augmente la capacité de stockage de ressources |
-| Barracks | BAR | 150 | — | 200 | Produit Marines et Marauders ; accepte un module (Tech Lab ou Réacteur) |
+| Barracks | BAR | 150 | — | 200 | Produit des Marines (sans module) ou des Marauders (Tech Lab) ; Réacteur : 2 Marines par cycle ; accepte un module (Tech Lab ou Réacteur) |
 | Factory | FAC | 150 | 75 | 250 | Produit les Hélions (sans module) ou les Tanks (Tech Lab) ; accepte un module (Tech Lab ou Réacteur) |
 | Starport | STP | 100 | 100 | 200 | Produit les Medivacs |
 | Tourelle | TUR | 75 | — | 150 | Défense statique (dégâts 18, portée 120, cd 1,4 s) |
