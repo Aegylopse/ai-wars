@@ -2850,7 +2850,7 @@ function forceEndGame(){
   endGame(alive.length===1 ? alive[0].id : (alive.length>0 ? alive[0].id : null));
 }
 
-window.addEventListener('resize',()=>{if(gameRunning) resize();});
+window.addEventListener('resize',()=>{if(gameRunning){resize();rebuildMapCanvas();}});
 resize();
 
 // Afficher stats initiales
