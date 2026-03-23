@@ -385,7 +385,7 @@ function loop(ts) {
   const steps=Math.ceil(totalDt/maxStep);
   const stepDt=totalDt/steps;
   for(let i=0;i<steps;i++){gameTime+=stepDt;updateGame(stepDt);}
-  updateTimer(); render(); updateHUD();
+  updateTimer(); if(speed<4||fpsCount%2===0) render(); updateHUD();
   if(gameRunning&&gameTime-lastResourceSample>5){
     lastResourceSample=gameTime;
     FACTION_DEFS.forEach(fd=>{
@@ -520,6 +520,7 @@ function updateGame(dt) {
   // Units
   for(let i=units.length-1;i>=0;i--){
     let u=units[i];
+    if(!u) continue;
     if(factions[u.faction]?.eliminated){units.splice(i,1);continue;}
     if(u.inMedivac) continue; // unité embarquée dans un medivac
     u.attackCooldown=Math.max(0,u.attackCooldown-dt);
@@ -560,20 +561,37 @@ function updateGame(dt) {
 }
 
 // ─── UNIT HELPERS ─────────────────────────────────────────────────────────────
-function myUnits(fid){return units.filter(u=>u.faction===fid);}
+function myUnits(fid){ return _stepCache.mu&&_stepCache.mu[fid]?_stepCache.mu[fid]:[]; }
 function myBuildings(fid){return buildings.filter(b=>b.faction===fid&&b.buildProgress>=1);}
 function dist(a,b){return Math.hypot(a.x-b.x,a.y-b.y);}
 function findClosest(arr,x,y){let best=null,bd=Infinity;for(let a of arr){let d=Math.hypot(a.x-x,a.y-y);if(d<bd){bd=d;best=a;}}return best;}
 function findClosestInRange(arr,x,y,range){let best=null,bd=Infinity;for(let a of arr){let d=Math.hypot(a.x-x,a.y-y);if(d<range&&d<bd){bd=d;best=a;}}return best;}
-function activeEnemyUnits(fid){return units.filter(v=>v.faction!==fid&&!factions[v.faction]?.eliminated);}
-function activeEnemyBuildings(fid){return buildings.filter(b=>b.faction!==fid&&b.buildProgress>=1&&!factions[b.faction]?.eliminated);}
+function activeEnemyUnits(fid){
+  if(_stepCache.aeu&&_stepCache.aeu[fid]) return _stepCache.aeu[fid];
+  const r=units.filter(v=>v.faction!==fid&&!factions[v.faction]?.eliminated);
+  if(!_stepCache.aeu) _stepCache.aeu={};
+  _stepCache.aeu[fid]=r; return r;
+}
+function activeEnemyBuildings(fid){
+  if(_stepCache.aeb&&_stepCache.aeb[fid]) return _stepCache.aeb[fid];
+  const r=buildings.filter(b=>b.faction!==fid&&b.buildProgress>=1&&!factions[b.faction]?.eliminated);
+  if(!_stepCache.aeb) _stepCache.aeb={};
+  _stepCache.aeb[fid]=r; return r;
+}
 
 // ─── SYSTÈME DE VISION IA ─────────────────────────────────────────────────────
 const VISION_RADIUS = { worker:90, soldier:130, viking:140, tank:160, hq:160, depot:100, barracks:110, factory:110, starport:110, medivac:140, turret:100 };
 
 // Cache par step — vidé au début de chaque updateGame/updateGameHeadless
 let _stepCache = {};
-function clearStepCache(){ _stepCache = {}; }
+let _aStarBudget = 0;
+function clearStepCache(){
+  // Précalcul myUnits en O(N) — évite 48 × units.filter() par step
+  const mu = {};
+  for(let u of units){ if(!mu[u.faction]) mu[u.faction]=[]; mu[u.faction].push(u); }
+  _stepCache = {mu};
+  _aStarBudget = 6;
+}
 
 // Retourne tous les points de vision (x,y,r) d'une faction — mis en cache
 function getVisionCircles(fid){
@@ -1358,9 +1376,12 @@ function moveTo(u,tx,ty,dt){
   u.pathTimer=(u.pathTimer||0)-dt;
   const destChanged=!u.pathTarget||Math.hypot(tx-u.pathTarget.x,ty-u.pathTarget.y)>TILE*4;
   if(destChanged||!u.path||u.path.length===0||u.pathTimer<=0){
-    u.path=aStar(u.x,u.y,tx,ty)||[];
-    u.pathTarget={x:tx,y:ty};
-    u.pathTimer=3;
+    if(_aStarBudget>0||destChanged||!u.path||u.path.length===0){
+      _aStarBudget--;
+      u.path=aStar(u.x,u.y,tx,ty)||[];
+      u.pathTarget={x:tx,y:ty};
+      u.pathTimer=5;
+    }
   }
   // Avancer vers le prochain waypoint (seuil plus large pour éviter l'oscillation)
   while(u.path.length>0&&Math.hypot(u.path[0].x-u.x,u.path[0].y-u.y)<TILE*1.2) u.path.shift();
@@ -2719,6 +2740,7 @@ function updateGameHeadless(dt){
   }
   for(let i=units.length-1;i>=0;i--){
     let u=units[i];
+    if(!u) continue;
     if(factions[u.faction]?.eliminated){units.splice(i,1);continue;}
     if(u.inMedivac) continue;
     u.attackCooldown=Math.max(0,u.attackCooldown-dt);
