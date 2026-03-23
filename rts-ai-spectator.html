@@ -278,7 +278,34 @@ function generateMap() {
     }
   });
 
-  // (pas de murs défensifs)
+  // Clusters aléatoires secondaires (évitent les zones de base)
+  const _bz=[
+    {cx:Math.floor(W*0.08/TILE),cy:Math.floor(H*0.10/TILE)},
+    {cx:Math.floor(W*0.92/TILE),cy:Math.floor(H*0.10/TILE)},
+    {cx:Math.floor(W*0.92/TILE),cy:Math.floor(H*0.90/TILE)},
+    {cx:Math.floor(W*0.08/TILE),cy:Math.floor(H*0.90/TILE)},
+  ];
+  for(let i=0;i<12;i++){
+    let rx,ry,att=0;
+    do{rx=6+Math.floor(Math.random()*(COLS-12));ry=6+Math.floor(Math.random()*(ROWS-12));att++;}
+    while(_bz.some(z=>Math.hypot(rx-z.cx,ry-z.cy)<18)&&att<30);
+    if(!_bz.some(z=>Math.hypot(rx-z.cx,ry-z.cy)<18)) placeCluster(rx,ry,6+Math.floor(Math.random()*12));
+  }
+
+  // Re-cleaner les zones de base après les clusters aléatoires
+  [[0,0],[COLS-1,0],[0,ROWS-1],[COLS-1,ROWS-1]].forEach(([bx,by])=>{
+    const sx=bx===0?1:-1, sy=by===0?1:-1;
+    for(let dy=0;dy<cl;dy++) for(let dx=0;dx<cl;dx++){
+      let y=by+sy*dy, x=bx+sx*dx;
+      if(y>=0&&y<ROWS&&x>=0&&x<COLS) map[y][x]=0;
+    }
+  });
+  rclears.forEach(({cx,cy})=>{
+    for(let dy=-5;dy<=6;dy++) for(let dx=-5;dx<=5;dx++){
+      let ny=cy+dy,nx=cx+dx;
+      if(ny>=0&&ny<ROWS&&nx>=0&&nx<COLS) map[ny][nx]=0;
+    }
+  });
 }
 
 function spawnResources() {
@@ -347,7 +374,7 @@ function startGame() {
   battleLog=[]; document.getElementById('battleLog').innerHTML='';
   resourceHistory={}; lastResourceSample=0; FACTION_DEFS.forEach(fd=>resourceHistory[fd.id]=[]);
   buildings=[]; units=[]; particles=[]; resources=[]; factions={}; aiState={};
-  resize(); generateMap(); spawnResources(); initExploreGrid();
+  resize(); generateMap(); rebuildMapCanvas(); spawnResources(); initExploreGrid();
   agentMemory.generation++;
   document.getElementById('genNum').textContent=agentMemory.generation;
 
@@ -1845,6 +1872,70 @@ function adaptParams(fid,agent,place){
 
 // ─── RENDER ───────────────────────────────────────────────────────────────────
 let _lowQuality = false;
+let _mapCanvas = null;
+
+function rebuildMapCanvas(){
+  _mapCanvas=document.createElement('canvas');
+  _mapCanvas.width=W; _mapCanvas.height=H;
+  const mc=_mapCanvas.getContext('2d');
+
+  // Fond de base
+  mc.fillStyle='#060b10'; mc.fillRect(0,0,W,H);
+
+  // Variations organiques du sol (hash pseudo-aléatoire)
+  for(let y=0;y<ROWS;y++) for(let x=0;x<COLS;x++){
+    if(map[y]&&map[y][x]===1) continue;
+    const h=((x*2311+y*1723+x*y*97)&0xffff)/65535;
+    if(h<0.12){ mc.fillStyle=`rgba(0,60,90,${(0.04+h*0.25).toFixed(3)})`; mc.fillRect(x*TILE,y*TILE,TILE,TILE); }
+    else if(h>0.88){ mc.fillStyle=`rgba(0,10,20,${(0.06+(h-0.88)*0.5).toFixed(3)})`; mc.fillRect(x*TILE,y*TILE,TILE,TILE); }
+  }
+
+  // Teintes de coin par faction
+  const corners=[
+    {x:W*0.12,y:H*0.12,r:[0,180,255]},
+    {x:W*0.88,y:H*0.12,r:[255,80,80]},
+    {x:W*0.88,y:H*0.88,r:[255,190,0]},
+    {x:W*0.12,y:H*0.88,r:[0,255,140]},
+  ];
+  for(let c of corners){
+    const g=mc.createRadialGradient(c.x,c.y,0,c.x,c.y,W*0.32);
+    g.addColorStop(0,`rgba(${c.r[0]},${c.r[1]},${c.r[2]},0.055)`);
+    g.addColorStop(1,'transparent');
+    mc.fillStyle=g; mc.fillRect(0,0,W,H);
+  }
+
+  // Grille subtile
+  mc.strokeStyle='rgba(100,150,200,0.022)'; mc.lineWidth=1;
+  for(let x=0;x<=COLS;x++){mc.beginPath();mc.moveTo(x*TILE,0);mc.lineTo(x*TILE,H);mc.stroke();}
+  for(let y=0;y<=ROWS;y++){mc.beginPath();mc.moveTo(0,y*TILE);mc.lineTo(W,y*TILE);mc.stroke();}
+
+  // Rochers avec awareness des voisins
+  const RB=['#2a2a36','#2e2e3a','#262632','#323240','#24242e','#2c2c38'];
+  const RI=['#1e1e28','#22222e','#1c1c26','#26263a','#1a1a22','#20202c'];
+  for(let y=0;y<ROWS;y++) for(let x=0;x<COLS;x++){
+    if(!map[y]||map[y][x]!==1) continue;
+    const px=x*TILE,py=y*TILE;
+    const T=y>0&&map[y-1]&&map[y-1][x]===1;
+    const B=y<ROWS-1&&map[y+1]&&map[y+1][x]===1;
+    const L=x>0&&map[y][x-1]===1;
+    const R=x<COLS-1&&map[y][x+1]===1;
+    const v=(x*17+y*31)%6;
+    mc.fillStyle=RB[v]; mc.fillRect(px,py,TILE,TILE);
+    mc.fillStyle=RI[v]; mc.fillRect(px+2,py+2,TILE-4,TILE-4);
+    mc.fillStyle='rgba(200,195,225,0.18)';
+    if(!T) mc.fillRect(px,py,TILE,2);
+    if(!L) mc.fillRect(px,py,2,TILE);
+    mc.fillStyle='rgba(0,0,0,0.45)';
+    if(!B) mc.fillRect(px,py+TILE-2,TILE,2);
+    if(!R) mc.fillRect(px+TILE-2,py,2,TILE);
+  }
+
+  // Lignes d'axe centrales
+  mc.strokeStyle='rgba(100,150,200,0.08)'; mc.lineWidth=1; mc.setLineDash([4,10]);
+  mc.beginPath();mc.moveTo(W/2,0);mc.lineTo(W/2,H);mc.stroke();
+  mc.beginPath();mc.moveTo(0,H/2);mc.lineTo(W,H/2);mc.stroke();
+  mc.setLineDash([]);
+}
 function render(){
   _lowQuality = _fpsSmooth < 40;
   ctx.fillStyle='#050a0f'; ctx.fillRect(0,0,W,H);
@@ -1923,28 +2014,7 @@ function drawFog(fid){
 }
 
 function drawMap(){
-  for(let y=0;y<ROWS;y++) for(let x=0;x<COLS;x++){
-    if(!map[y]) continue;
-    if(map[y][x]===1){
-      const px=x*TILE, py=y*TILE;
-      // Rock base
-      ctx.fillStyle='#3a3a42'; ctx.fillRect(px,py,TILE,TILE);
-      // Inner rock texture
-      ctx.fillStyle='#2e2e38'; ctx.fillRect(px+2,py+2,TILE-4,TILE-4);
-      // Top-left highlight (light source from top-left)
-      ctx.fillStyle='rgba(180,175,200,0.18)';
-      ctx.fillRect(px,py,TILE,2); ctx.fillRect(px,py,2,TILE);
-      // Bottom-right shadow
-      ctx.fillStyle='rgba(0,0,0,0.35)';
-      ctx.fillRect(px,py+TILE-2,TILE,2); ctx.fillRect(px+TILE-2,py,2,TILE);
-    } else if((x+y)%2===0){
-      ctx.fillStyle='rgba(0,40,60,0.025)';ctx.fillRect(x*TILE,y*TILE,TILE,TILE);
-    }
-  }
-  ctx.strokeStyle='rgba(100,150,200,0.04)'; ctx.lineWidth=1; ctx.setLineDash([4,10]);
-  ctx.beginPath();ctx.moveTo(W/2,0);ctx.lineTo(W/2,H);ctx.stroke();
-  ctx.beginPath();ctx.moveTo(0,H/2);ctx.lineTo(W,H/2);ctx.stroke();
-  ctx.setLineDash([]);
+  if(_mapCanvas) ctx.drawImage(_mapCanvas,0,0);
 }
 
 function drawResources(){
