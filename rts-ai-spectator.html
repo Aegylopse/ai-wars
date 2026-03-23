@@ -200,6 +200,14 @@ const BUILDING_TYPES = {
   turret:    {hp:150, size:16, cost:75,  costVespene:0,  label:'TUR', attack:18, range:120},
 };
 
+const UNIT_SUPPLY = { worker:1, marine:1, marauder:2, hellion:2, tank:4, medivac:2, viking:2 };
+const BASE_SUPPLY = 16;   // supply de base (HQ)
+const DEPOT_SUPPLY = 10;  // supply par dépôt
+
+function usedSupply(fid){ return myUnits(fid).reduce((s,u)=>s+(UNIT_SUPPLY[u.type]||1),0); }
+function maxSupply(fid){ return BASE_SUPPLY + myBuildings(fid).filter(b=>b.type==='depot'&&b.buildProgress>=1).length*DEPOT_SUPPLY; }
+function canAffordSupply(fid, type){ return usedSupply(fid)+(UNIT_SUPPLY[type]||1) <= maxSupply(fid); }
+
 // ─── CANVAS & MAP ─────────────────────────────────────────────────────────────
 function resize() {
   W=canvas.clientWidth; H=canvas.clientHeight;
@@ -258,10 +266,10 @@ function generateMap() {
     {cx:Math.floor(W*0.92/TILE),cy:Math.floor(H*0.10/TILE)},
     {cx:Math.floor(W*0.92/TILE),cy:Math.floor(H*0.90/TILE)},
     {cx:Math.floor(W*0.08/TILE),cy:Math.floor(H*0.90/TILE)},
-    {cx:Math.floor(W*0.38/TILE),cy:Math.floor(H*0.35/TILE)},
-    {cx:Math.floor(W*0.62/TILE),cy:Math.floor(H*0.35/TILE)},
-    {cx:Math.floor(W*0.38/TILE),cy:Math.floor(H*0.65/TILE)},
-    {cx:Math.floor(W*0.62/TILE),cy:Math.floor(H*0.65/TILE)},
+    {cx:Math.floor(W*0.22/TILE),cy:Math.floor(H*0.22/TILE)},
+    {cx:Math.floor(W*0.78/TILE),cy:Math.floor(H*0.22/TILE)},
+    {cx:Math.floor(W*0.22/TILE),cy:Math.floor(H*0.78/TILE)},
+    {cx:Math.floor(W*0.78/TILE),cy:Math.floor(H*0.78/TILE)},
   ];
   rclears.forEach(({cx,cy})=>{
     for(let dy=-5;dy<=6;dy++) for(let dx=-5;dx<=5;dx++){
@@ -307,7 +315,7 @@ function spawnResources() {
   // ── Clusters centraux (inchangés) ──
   const S=20;
   const offs=[{dx:-S,dy:-S},{dx:S,dy:-S},{dx:-S,dy:0},{dx:S,dy:0},{dx:-S,dy:S},{dx:S,dy:S}];
-  [{cx:W*0.38,cy:H*0.35},{cx:W*0.62,cy:H*0.35},{cx:W*0.38,cy:H*0.65},{cx:W*0.62,cy:H*0.65}]
+  [{cx:W*0.22,cy:H*0.22},{cx:W*0.78,cy:H*0.22},{cx:W*0.22,cy:H*0.78},{cx:W*0.78,cy:H*0.78}]
   .forEach(c=>{
     offs.forEach(o=>addR(c.cx+o.dx,c.cy+o.dy,'mineral'));
     addR(c.cx-8,c.cy+30,'vespene'); addR(c.cx+8,c.cy+30,'vespene');
@@ -328,7 +336,7 @@ function makeUnit(fid,type,x,y) {
 function makeBuilding(fid,type,x,y) {
   const t=BUILDING_TYPES[type];
   let b={id:uid++,faction:fid,type,x,y,hp:type==='hq'?t.hp:1,maxHp:t.hp,size:t.size,buildProgress:type==='hq'?1:0,spawnTimer:0,attack:t.attack||0,range:t.range||0,attackCooldown:0,label:t.label};
-  if(type==='barracks'){b.module=null;b.modulePending=null;b.moduleBuildTimer=0;}
+  if(type==='barracks'||type==='factory'){b.module=null;b.modulePending=null;b.moduleBuildTimer=0;}
   return b;
 }
 
@@ -377,7 +385,7 @@ function loop(ts) {
   const steps=Math.ceil(totalDt/maxStep);
   const stepDt=totalDt/steps;
   for(let i=0;i<steps;i++){gameTime+=stepDt;updateGame(stepDt);}
-  updateTimer(); render(); updateHUD();
+  updateTimer(); if(speed<4||fpsCount%2===0) render(); updateHUD();
   if(gameRunning&&gameTime-lastResourceSample>5){
     lastResourceSample=gameTime;
     FACTION_DEFS.forEach(fd=>{
@@ -412,7 +420,7 @@ function updateGame(dt) {
       if(b.spawnTimer<=0){
         if(b.type==='hq'){
           let w=myUnits(b.faction).filter(u=>u.type==='worker').length;
-          if(w<10&&f.resources>=50){f.resources-=50;units.push(makeUnit(b.faction,'worker',b.x+(Math.random()-0.5)*40,b.y+(Math.random()-0.5)*40));b.spawnTimer=20;}
+          if(w<10&&f.resources>=50&&canAffordSupply(b.faction,'worker')){f.resources-=50;units.push(makeUnit(b.faction,'worker',b.x+(Math.random()-0.5)*40,b.y+(Math.random()-0.5)*40));b.spawnTimer=20;}
           else b.spawnTimer=4;
         } else b.spawnTimer=999;
       }
@@ -429,35 +437,54 @@ function updateGame(dt) {
         if(f.stimResearchTimer<=0){f.stimResearched=true;f.stimResearching=false;log(`${f.name} — ⚡ STIMULANT actif ! (+50% marines+marauders)`,b.faction);}
       }
       // ── Spawn ──
+      if(f.resources>300&&b.spawnTimer>1) b.spawnTimer=1; // flush si surplus
       b.spawnTimer-=dt;
       if(b.spawnTimer<=0){
         let infantry=myUnits(b.faction).filter(u=>u.type==='marine'||u.type==='marauder');
-        if(infantry.length<18){
+        if(infantry.length<30){
           let canMarauder=b.module==='techlab';
           let marauders=infantry.filter(u=>u.type==='marauder').length;
           let marines2=infantry.filter(u=>u.type==='marine').length;
           let spawnType=(canMarauder&&marines2>=marauders*2)?'marauder':'marine';
           let count=(spawnType==='marine'&&b.module==='reactor')?2:1;
           let cost=spawnType==='marauder'?50:50*count, costVesp=spawnType==='marauder'?20:0;
-          if(f.resources>=cost&&f.vespene>=costVesp){
+          let supplyCost=(UNIT_SUPPLY[spawnType]||1)*count;
+          if(f.resources>=cost&&f.vespene>=costVesp&&usedSupply(b.faction)+supplyCost<=maxSupply(b.faction)){
             f.resources-=cost;f.vespene-=costVesp;
             for(let i=0;i<count;i++) units.push(makeUnit(b.faction,spawnType,b.x+(Math.random()-0.5)*30,b.y+(Math.random()-0.5)*30));
-            b.spawnTimer=spawnType==='marauder'?13:10;
+            b.spawnTimer=spawnType==='marauder'?9:7;
           } else b.spawnTimer=4;
         } else b.spawnTimer=4;
       }
     }
     if(b.type==='factory'){
+      // ── Build module ──
+      if(b.modulePending&&!b.module){
+        b.moduleBuildTimer-=dt;
+        if(b.moduleBuildTimer<=0){b.module=b.modulePending;b.modulePending=null;log(`${factions[b.faction]?.name} — ${b.module==='techlab'?'Centre Technique':'Réacteur'} (Factory) opérationnel`,b.faction);}
+      }
+      if(f.resources>300&&b.spawnTimer>1) b.spawnTimer=1; // flush si surplus
       b.spawnTimer-=dt;
       if(b.spawnTimer<=0){
-        let vt=myUnits(b.faction).filter(u=>u.type==='tank').length;
-        let vh=myUnits(b.faction).filter(u=>u.type==='hellion').length;
-        let enemyLight=visibleEnemyUnits(b.faction).filter(v=>UNIT_TYPES[v.type]?.light&&!isAirUnit(v)).length;
-        // Décision IA : hélions si beaucoup d'unités légères ennemies ou déséquilibre, tanks sinon
-        let buildHellion = vh<4 && (enemyLight>3 || vh<vt);
-        if(buildHellion&&f.resources>=100){f.resources-=100;units.push(makeUnit(b.faction,'hellion',b.x+(Math.random()-0.5)*30,b.y+(Math.random()-0.5)*30));b.spawnTimer=15;}
-        else if(vt<6&&f.resources>=150&&f.vespene>=100){f.resources-=150;f.vespene-=100;units.push(makeUnit(b.faction,'tank',b.x+(Math.random()-0.5)*30,b.y+(Math.random()-0.5)*30));b.spawnTimer=22;}
-        else b.spawnTimer=4;
+        const mod=b.module;
+        if(mod==='techlab'){
+          // Avec Tech Lab : produit des tanks
+          let vt=myUnits(b.faction).filter(u=>u.type==='tank').length;
+          if(vt<10&&f.resources>=150&&f.vespene>=100&&canAffordSupply(b.faction,'tank')){f.resources-=150;f.vespene-=100;units.push(makeUnit(b.faction,'tank',b.x+(Math.random()-0.5)*30,b.y+(Math.random()-0.5)*30));b.spawnTimer=22;}
+          else b.spawnTimer=4;
+        } else if(mod==='reactor'){
+          // Avec Réacteur : produit 2 hélions si ressources suffisantes
+          let vh=myUnits(b.faction).filter(u=>u.type==='hellion').length;
+          const canDouble=usedSupply(b.faction)+2*(UNIT_SUPPLY['hellion']||1)<=maxSupply(b.faction);
+          if(vh<8&&f.resources>=200&&canDouble){f.resources-=200;units.push(makeUnit(b.faction,'hellion',b.x+(Math.random()-0.5)*30,b.y+(Math.random()-0.5)*30));units.push(makeUnit(b.faction,'hellion',b.x+(Math.random()-0.5)*30,b.y+(Math.random()-0.5)*30));b.spawnTimer=15;}
+          else if(vh<8&&f.resources>=100&&canAffordSupply(b.faction,'hellion')){f.resources-=100;units.push(makeUnit(b.faction,'hellion',b.x+(Math.random()-0.5)*30,b.y+(Math.random()-0.5)*30));b.spawnTimer=15;}
+          else b.spawnTimer=4;
+        } else {
+          // Sans module : produit des hélions uniquement
+          let vh=myUnits(b.faction).filter(u=>u.type==='hellion').length;
+          if(vh<6&&f.resources>=100&&canAffordSupply(b.faction,'hellion')){f.resources-=100;units.push(makeUnit(b.faction,'hellion',b.x+(Math.random()-0.5)*30,b.y+(Math.random()-0.5)*30));b.spawnTimer=15;}
+          else b.spawnTimer=4;
+        }
       }
     }
     if(b.type==='starport'){
@@ -483,8 +510,8 @@ function updateGame(dt) {
         } else if(vk<2){
           buildViking=true;                        // anti-air par défaut si sous le cap
         }
-        if(buildViking&&f.resources>=100&&f.vespene>=75){f.resources-=100;f.vespene-=75;units.push(makeUnit(b.faction,'viking',b.x+(Math.random()-0.5)*30,b.y+(Math.random()-0.5)*30));b.spawnTimer=25;}
-        else if(buildMedivac&&f.resources>=100&&f.vespene>=100){f.resources-=100;f.vespene-=100;units.push(makeUnit(b.faction,'medivac',b.x+(Math.random()-0.5)*30,b.y+(Math.random()-0.5)*30));b.spawnTimer=28;}
+        if(buildViking&&f.resources>=100&&f.vespene>=75&&canAffordSupply(b.faction,'viking')){f.resources-=100;f.vespene-=75;units.push(makeUnit(b.faction,'viking',b.x+(Math.random()-0.5)*30,b.y+(Math.random()-0.5)*30));b.spawnTimer=25;}
+        else if(buildMedivac&&f.resources>=100&&f.vespene>=100&&canAffordSupply(b.faction,'medivac')){f.resources-=100;f.vespene-=100;units.push(makeUnit(b.faction,'medivac',b.x+(Math.random()-0.5)*30,b.y+(Math.random()-0.5)*30));b.spawnTimer=28;}
         else b.spawnTimer=4;
       }
     }
@@ -493,6 +520,7 @@ function updateGame(dt) {
   // Units
   for(let i=units.length-1;i>=0;i--){
     let u=units[i];
+    if(!u) continue;
     if(factions[u.faction]?.eliminated){units.splice(i,1);continue;}
     if(u.inMedivac) continue; // unité embarquée dans un medivac
     u.attackCooldown=Math.max(0,u.attackCooldown-dt);
@@ -533,20 +561,37 @@ function updateGame(dt) {
 }
 
 // ─── UNIT HELPERS ─────────────────────────────────────────────────────────────
-function myUnits(fid){return units.filter(u=>u.faction===fid);}
+function myUnits(fid){ return _stepCache.mu&&_stepCache.mu[fid]?_stepCache.mu[fid]:[]; }
 function myBuildings(fid){return buildings.filter(b=>b.faction===fid&&b.buildProgress>=1);}
 function dist(a,b){return Math.hypot(a.x-b.x,a.y-b.y);}
 function findClosest(arr,x,y){let best=null,bd=Infinity;for(let a of arr){let d=Math.hypot(a.x-x,a.y-y);if(d<bd){bd=d;best=a;}}return best;}
 function findClosestInRange(arr,x,y,range){let best=null,bd=Infinity;for(let a of arr){let d=Math.hypot(a.x-x,a.y-y);if(d<range&&d<bd){bd=d;best=a;}}return best;}
-function activeEnemyUnits(fid){return units.filter(v=>v.faction!==fid&&!factions[v.faction]?.eliminated);}
-function activeEnemyBuildings(fid){return buildings.filter(b=>b.faction!==fid&&b.buildProgress>=1&&!factions[b.faction]?.eliminated);}
+function activeEnemyUnits(fid){
+  if(_stepCache.aeu&&_stepCache.aeu[fid]) return _stepCache.aeu[fid];
+  const r=units.filter(v=>v.faction!==fid&&!factions[v.faction]?.eliminated);
+  if(!_stepCache.aeu) _stepCache.aeu={};
+  _stepCache.aeu[fid]=r; return r;
+}
+function activeEnemyBuildings(fid){
+  if(_stepCache.aeb&&_stepCache.aeb[fid]) return _stepCache.aeb[fid];
+  const r=buildings.filter(b=>b.faction!==fid&&b.buildProgress>=1&&!factions[b.faction]?.eliminated);
+  if(!_stepCache.aeb) _stepCache.aeb={};
+  _stepCache.aeb[fid]=r; return r;
+}
 
 // ─── SYSTÈME DE VISION IA ─────────────────────────────────────────────────────
 const VISION_RADIUS = { worker:90, soldier:130, viking:140, tank:160, hq:160, depot:100, barracks:110, factory:110, starport:110, medivac:140, turret:100 };
 
 // Cache par step — vidé au début de chaque updateGame/updateGameHeadless
 let _stepCache = {};
-function clearStepCache(){ _stepCache = {}; }
+let _aStarBudget = 0;
+function clearStepCache(){
+  // Précalcul myUnits en O(N) — évite 48 × units.filter() par step
+  const mu = {};
+  for(let u of units){ if(!mu[u.faction]) mu[u.faction]=[]; mu[u.faction].push(u); }
+  _stepCache = {mu};
+  _aStarBudget = 6;
+}
 
 // Retourne tous les points de vision (x,y,r) d'une faction — mis en cache
 function getVisionCircles(fid){
@@ -1331,9 +1376,12 @@ function moveTo(u,tx,ty,dt){
   u.pathTimer=(u.pathTimer||0)-dt;
   const destChanged=!u.pathTarget||Math.hypot(tx-u.pathTarget.x,ty-u.pathTarget.y)>TILE*4;
   if(destChanged||!u.path||u.path.length===0||u.pathTimer<=0){
-    u.path=aStar(u.x,u.y,tx,ty)||[];
-    u.pathTarget={x:tx,y:ty};
-    u.pathTimer=3;
+    if(_aStarBudget>0||destChanged||!u.path||u.path.length===0){
+      _aStarBudget--;
+      u.path=aStar(u.x,u.y,tx,ty)||[];
+      u.pathTarget={x:tx,y:ty};
+      u.pathTimer=5;
+    }
   }
   // Avancer vers le prochain waypoint (seuil plus large pour éviter l'oscillation)
   while(u.path.length>0&&Math.hypot(u.path[0].x-u.x,u.path[0].y-u.y)<TILE*1.2) u.path.shift();
@@ -1465,7 +1513,10 @@ function runAI(fid,dt) {
     const starports=myB.filter(b=>b.type==='starport').length;
 
     let toBuild=null;
-    if(barracks<1&&res>=costBar) toBuild='barracks';
+    // Supply saturée → dépôt en priorité absolue
+    const supplyUsed=usedSupply(fid), supplyMax=maxSupply(fid);
+    if(supplyUsed>=supplyMax*0.75&&depots<8&&res>=costDep) toBuild='depot';
+    else if(barracks<1&&res>=costBar) toBuild='barracks';
     else if(factories<1&&res>=costFac&&barracks>=1&&soldiers.length>=3) toBuild='factory';
     // Starport dès que vespène disponible
     else if(starports<1&&res>=BUILDING_TYPES.starport.cost&&vesp>=BUILDING_TYPES.starport.costVespene&&factories>=1) toBuild='starport';
@@ -1474,14 +1525,14 @@ function runAI(fid,dt) {
     // Réponse adaptative : si hint anti-tank → plus de casernes ; si anti-inf → plus d'usines
     else if(ai.compositionHint==='marauder'&&barracks<4&&res>=costBar) toBuild='barracks';
     else if(ai.compositionHint==='tank'&&factories<3&&res>=costFac&&vesp>=BUILDING_TYPES.factory.costVespene) toBuild='factory';
-    else if(res>=costBar*4&&barracks<3) toBuild='barracks';
-    else if(res>=costFac*2.5&&factories<2&&barracks>=1) toBuild='factory';
-    else if(res>=costBar*7&&barracks<4) toBuild='barracks';
-    else if(res>=costFac*4&&factories<3&&barracks>=2) toBuild='factory';
-    else if(res>=costBar*12&&barracks<5) toBuild='barracks';
-    else if(res>=costFac*7.5&&factories<4&&barracks>=3) toBuild='factory';
-    else if(p.expansionDrive>0.4&&depots<2&&res>=costDep*2) toBuild='depot';
-    else if(depots<3&&res>=costDep*4) toBuild='depot';
+    else if(res>=costBar*2&&barracks<3) toBuild='barracks';
+    else if(res>=costFac*1.5&&factories<2&&barracks>=1) toBuild='factory';
+    else if(res>=costBar*3.5&&barracks<4) toBuild='barracks';
+    else if(res>=costFac*2.5&&factories<3&&barracks>=2) toBuild='factory';
+    else if(res>=costBar*5&&barracks<5) toBuild='barracks';
+    else if(res>=costFac*4&&factories<4&&barracks>=3) toBuild='factory';
+    else if(p.expansionDrive>0.4&&depots<8&&res>=costDep*2) toBuild='depot';
+    else if(depots<8&&res>=costDep*4) toBuild='depot';
 
     if(toBuild){
       let worker=workers.find(w=>w.state==='idle'||w.state==='harvest');
@@ -1544,6 +1595,29 @@ function runAI(fid,dt) {
           f.stimResearchTimer = 60;
           log(`${f.name} — Recherche Stimulant lancée...`, fid);
         }
+      }
+    }
+  }
+
+  // ── Modules de factory ──
+  {
+    const factModTimerKey = 'factModuleTimer';
+    if(!ai[factModTimerKey]) ai[factModTimerKey] = 0;
+    ai[factModTimerKey] -= dt;
+    if(ai[factModTimerKey] <= 0) {
+      ai[factModTimerKey] = 5 + Math.random() * 5;
+      const moduleCost = 50, moduleCostVesp = 50;
+      const myFactories = myB.filter(b=>b.type==='factory'&&b.buildProgress>=1);
+      const ftechlabCount = myFactories.filter(b=>b.module==='techlab'||b.modulePending==='techlab').length;
+      const freeFact = myFactories.filter(b=>!b.module&&!b.modulePending);
+      if(freeFact.length > 0 && f.resources >= moduleCost && f.vespene >= moduleCostVesp) {
+        // Prioriser tech lab (débloque tanks), puis réacteur
+        let moduleType = ftechlabCount === 0 ? 'techlab' : 'reactor';
+        let target = freeFact[0];
+        f.resources -= moduleCost; f.vespene -= moduleCostVesp;
+        target.modulePending = moduleType;
+        target.moduleBuildTimer = 30;
+        log(`${f.name} — Construction ${moduleType==='techlab'?'Centre Technique':'Réacteur'} (Factory)...`, fid);
       }
     }
   }
@@ -1935,8 +2009,8 @@ function drawBuildings(){
       ctx.fillStyle=bright; ctx.font='10px Share Tech Mono';
       ctx.textAlign='center'; ctx.textBaseline='middle'; ctx.fillText(b.label,0,0);
       if(b.buildProgress<1){ctx.fillStyle='#111';ctx.fillRect(-s/2,s/2+2,s,3);ctx.fillStyle=bright;ctx.fillRect(-s/2,s/2+2,s*b.buildProgress,3);}
-      // ── Indicateur module caserne ──
-      if(b.type==='barracks'&&b.buildProgress>=1){
+      // ── Indicateur module caserne / factory ──
+      if((b.type==='barracks'||b.type==='factory')&&b.buildProgress>=1){
         const mod=b.module||b.modulePending;
         if(mod){
           const mc=mod==='techlab'?'#ff9500':'#00cfff';
@@ -2117,7 +2191,7 @@ function buildHUD(){
     let ag=agentMemory.agents[fd.id];
     return `<div class="faction-card" id="card-${fd.id}" style="border-color:${fd.color}33;color:${fd.color}">
       <div class="fname">${fd.name}</div>
-      <div class="fstats"><span>🏗<span id="hb-${fd.id}">0</span></span><span>⚔<span id="hu-${fd.id}">0</span></span><span>💎<span id="hr-${fd.id}">0</span></span><span style="color:#00ff88">◆<span id="hv-${fd.id}">0</span></span></div>
+      <div class="fstats"><span>🏗<span id="hb-${fd.id}">0</span></span><span>👥<span id="hs-${fd.id}">0</span>/<span id="hsm-${fd.id}">${BASE_SUPPLY}</span></span><span>💎<span id="hr-${fd.id}">0</span></span><span style="color:#00ff88">◆<span id="hv-${fd.id}">0</span></span></div>
       <div style="display:flex;gap:4px"><span class="phase-badge" id="hp-${fd.id}">ECO</span><span class="gen-badge">${ag.wins}W/${ag.totalGames}G</span></div>
     </div>`;
   }).join('');
@@ -2128,7 +2202,8 @@ function updateHUD(){
     let f=factions[fd.id]; if(!f) continue;
     let myB=myBuildings(fd.id),myU=myUnits(fd.id);
     document.getElementById('hb-'+fd.id).textContent=myB.length;
-    document.getElementById('hu-'+fd.id).textContent=myU.length;
+    let hs=document.getElementById('hs-'+fd.id); if(hs) hs.textContent=usedSupply(fd.id);
+    let hsm=document.getElementById('hsm-'+fd.id); if(hsm) hsm.textContent=maxSupply(fd.id);
     document.getElementById('hr-'+fd.id).textContent=Math.floor(f.resources);
     let hv=document.getElementById('hv-'+fd.id); if(hv) hv.textContent=Math.floor(f.vespene||0);
     let ph=document.getElementById('hp-'+fd.id);
@@ -2567,7 +2642,7 @@ function updateGameHeadless(dt){
       if(b.spawnTimer<=0){
         if(b.type==='hq'){
           let w=myUnits(b.faction).filter(u=>u.type==='worker').length;
-          if(w<10&&f.resources>=50){f.resources-=50;units.push(makeUnit(b.faction,'worker',b.x+(Math.random()-0.5)*40,b.y+(Math.random()-0.5)*40));b.spawnTimer=20;}
+          if(w<10&&f.resources>=50&&canAffordSupply(b.faction,'worker')){f.resources-=50;units.push(makeUnit(b.faction,'worker',b.x+(Math.random()-0.5)*40,b.y+(Math.random()-0.5)*40));b.spawnTimer=20;}
           else b.spawnTimer=4;
         } else b.spawnTimer=999;
       }
@@ -2584,35 +2659,54 @@ function updateGameHeadless(dt){
         if(f.stimResearchTimer<=0){f.stimResearched=true;f.stimResearching=false;log(`${f.name} — ⚡ STIMULANT actif ! (+50% marines+marauders)`,b.faction);}
       }
       // ── Spawn ──
+      if(f.resources>300&&b.spawnTimer>1) b.spawnTimer=1; // flush si surplus
       b.spawnTimer-=dt;
       if(b.spawnTimer<=0){
         let infantry=myUnits(b.faction).filter(u=>u.type==='marine'||u.type==='marauder');
-        if(infantry.length<18){
+        if(infantry.length<30){
           let canMarauder=b.module==='techlab';
           let marauders=infantry.filter(u=>u.type==='marauder').length;
           let marines2=infantry.filter(u=>u.type==='marine').length;
           let spawnType=(canMarauder&&marines2>=marauders*2)?'marauder':'marine';
           let count=(spawnType==='marine'&&b.module==='reactor')?2:1;
           let cost=spawnType==='marauder'?50:50*count, costVesp=spawnType==='marauder'?20:0;
-          if(f.resources>=cost&&f.vespene>=costVesp){
+          let supplyCost=(UNIT_SUPPLY[spawnType]||1)*count;
+          if(f.resources>=cost&&f.vespene>=costVesp&&usedSupply(b.faction)+supplyCost<=maxSupply(b.faction)){
             f.resources-=cost;f.vespene-=costVesp;
             for(let i=0;i<count;i++) units.push(makeUnit(b.faction,spawnType,b.x+(Math.random()-0.5)*30,b.y+(Math.random()-0.5)*30));
-            b.spawnTimer=spawnType==='marauder'?13:10;
+            b.spawnTimer=spawnType==='marauder'?9:7;
           } else b.spawnTimer=4;
         } else b.spawnTimer=4;
       }
     }
     if(b.type==='factory'){
+      // ── Build module ──
+      if(b.modulePending&&!b.module){
+        b.moduleBuildTimer-=dt;
+        if(b.moduleBuildTimer<=0){b.module=b.modulePending;b.modulePending=null;log(`${factions[b.faction]?.name} — ${b.module==='techlab'?'Centre Technique':'Réacteur'} (Factory) opérationnel`,b.faction);}
+      }
+      if(f.resources>300&&b.spawnTimer>1) b.spawnTimer=1; // flush si surplus
       b.spawnTimer-=dt;
       if(b.spawnTimer<=0){
-        let vt=myUnits(b.faction).filter(u=>u.type==='tank').length;
-        let vh=myUnits(b.faction).filter(u=>u.type==='hellion').length;
-        let enemyLight=visibleEnemyUnits(b.faction).filter(v=>UNIT_TYPES[v.type]?.light&&!isAirUnit(v)).length;
-        // Décision IA : hélions si beaucoup d'unités légères ennemies ou déséquilibre, tanks sinon
-        let buildHellion = vh<4 && (enemyLight>3 || vh<vt);
-        if(buildHellion&&f.resources>=100){f.resources-=100;units.push(makeUnit(b.faction,'hellion',b.x+(Math.random()-0.5)*30,b.y+(Math.random()-0.5)*30));b.spawnTimer=15;}
-        else if(vt<6&&f.resources>=150&&f.vespene>=100){f.resources-=150;f.vespene-=100;units.push(makeUnit(b.faction,'tank',b.x+(Math.random()-0.5)*30,b.y+(Math.random()-0.5)*30));b.spawnTimer=22;}
-        else b.spawnTimer=4;
+        const mod=b.module;
+        if(mod==='techlab'){
+          // Avec Tech Lab : produit des tanks
+          let vt=myUnits(b.faction).filter(u=>u.type==='tank').length;
+          if(vt<10&&f.resources>=150&&f.vespene>=100&&canAffordSupply(b.faction,'tank')){f.resources-=150;f.vespene-=100;units.push(makeUnit(b.faction,'tank',b.x+(Math.random()-0.5)*30,b.y+(Math.random()-0.5)*30));b.spawnTimer=22;}
+          else b.spawnTimer=4;
+        } else if(mod==='reactor'){
+          // Avec Réacteur : produit 2 hélions si ressources suffisantes
+          let vh=myUnits(b.faction).filter(u=>u.type==='hellion').length;
+          const canDouble=usedSupply(b.faction)+2*(UNIT_SUPPLY['hellion']||1)<=maxSupply(b.faction);
+          if(vh<8&&f.resources>=200&&canDouble){f.resources-=200;units.push(makeUnit(b.faction,'hellion',b.x+(Math.random()-0.5)*30,b.y+(Math.random()-0.5)*30));units.push(makeUnit(b.faction,'hellion',b.x+(Math.random()-0.5)*30,b.y+(Math.random()-0.5)*30));b.spawnTimer=15;}
+          else if(vh<8&&f.resources>=100&&canAffordSupply(b.faction,'hellion')){f.resources-=100;units.push(makeUnit(b.faction,'hellion',b.x+(Math.random()-0.5)*30,b.y+(Math.random()-0.5)*30));b.spawnTimer=15;}
+          else b.spawnTimer=4;
+        } else {
+          // Sans module : produit des hélions uniquement
+          let vh=myUnits(b.faction).filter(u=>u.type==='hellion').length;
+          if(vh<6&&f.resources>=100&&canAffordSupply(b.faction,'hellion')){f.resources-=100;units.push(makeUnit(b.faction,'hellion',b.x+(Math.random()-0.5)*30,b.y+(Math.random()-0.5)*30));b.spawnTimer=15;}
+          else b.spawnTimer=4;
+        }
       }
     }
     if(b.type==='starport'){
@@ -2638,14 +2732,15 @@ function updateGameHeadless(dt){
         } else if(vk<2){
           buildViking=true;                        // anti-air par défaut si sous le cap
         }
-        if(buildViking&&f.resources>=100&&f.vespene>=75){f.resources-=100;f.vespene-=75;units.push(makeUnit(b.faction,'viking',b.x+(Math.random()-0.5)*30,b.y+(Math.random()-0.5)*30));b.spawnTimer=25;}
-        else if(buildMedivac&&f.resources>=100&&f.vespene>=100){f.resources-=100;f.vespene-=100;units.push(makeUnit(b.faction,'medivac',b.x+(Math.random()-0.5)*30,b.y+(Math.random()-0.5)*30));b.spawnTimer=28;}
+        if(buildViking&&f.resources>=100&&f.vespene>=75&&canAffordSupply(b.faction,'viking')){f.resources-=100;f.vespene-=75;units.push(makeUnit(b.faction,'viking',b.x+(Math.random()-0.5)*30,b.y+(Math.random()-0.5)*30));b.spawnTimer=25;}
+        else if(buildMedivac&&f.resources>=100&&f.vespene>=100&&canAffordSupply(b.faction,'medivac')){f.resources-=100;f.vespene-=100;units.push(makeUnit(b.faction,'medivac',b.x+(Math.random()-0.5)*30,b.y+(Math.random()-0.5)*30));b.spawnTimer=28;}
         else b.spawnTimer=4;
       }
     }
   }
   for(let i=units.length-1;i>=0;i--){
     let u=units[i];
+    if(!u) continue;
     if(factions[u.faction]?.eliminated){units.splice(i,1);continue;}
     if(u.inMedivac) continue;
     u.attackCooldown=Math.max(0,u.attackCooldown-dt);
