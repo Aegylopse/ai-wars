@@ -336,7 +336,7 @@ function makeUnit(fid,type,x,y) {
 function makeBuilding(fid,type,x,y) {
   const t=BUILDING_TYPES[type];
   let b={id:uid++,faction:fid,type,x,y,hp:type==='hq'?t.hp:1,maxHp:t.hp,size:t.size,buildProgress:type==='hq'?1:0,spawnTimer:0,attack:t.attack||0,range:t.range||0,attackCooldown:0,label:t.label};
-  if(type==='barracks'){b.module=null;b.modulePending=null;b.moduleBuildTimer=0;}
+  if(type==='barracks'||type==='factory'){b.module=null;b.modulePending=null;b.moduleBuildTimer=0;}
   return b;
 }
 
@@ -458,17 +458,33 @@ function updateGame(dt) {
       }
     }
     if(b.type==='factory'){
+      // ── Build module ──
+      if(b.modulePending&&!b.module){
+        b.moduleBuildTimer-=dt;
+        if(b.moduleBuildTimer<=0){b.module=b.modulePending;b.modulePending=null;log(`${factions[b.faction]?.name} — ${b.module==='techlab'?'Centre Technique':'Réacteur'} (Factory) opérationnel`,b.faction);}
+      }
       if(f.resources>300&&b.spawnTimer>1) b.spawnTimer=1; // flush si surplus
       b.spawnTimer-=dt;
       if(b.spawnTimer<=0){
-        let vt=myUnits(b.faction).filter(u=>u.type==='tank').length;
-        let vh=myUnits(b.faction).filter(u=>u.type==='hellion').length;
-        let enemyLight=visibleEnemyUnits(b.faction).filter(v=>UNIT_TYPES[v.type]?.light&&!isAirUnit(v)).length;
-        // Décision IA : hélions si beaucoup d'unités légères ennemies ou déséquilibre, tanks sinon
-        let buildHellion = vh<4 && (enemyLight>3 || vh<vt);
-        if(buildHellion&&f.resources>=100&&canAffordSupply(b.faction,'hellion')){f.resources-=100;units.push(makeUnit(b.faction,'hellion',b.x+(Math.random()-0.5)*30,b.y+(Math.random()-0.5)*30));b.spawnTimer=15;}
-        else if(vt<10&&f.resources>=150&&f.vespene>=100&&canAffordSupply(b.faction,'tank')){f.resources-=150;f.vespene-=100;units.push(makeUnit(b.faction,'tank',b.x+(Math.random()-0.5)*30,b.y+(Math.random()-0.5)*30));b.spawnTimer=22;}
-        else b.spawnTimer=4;
+        const mod=b.module;
+        if(mod==='techlab'){
+          // Avec Tech Lab : produit des tanks
+          let vt=myUnits(b.faction).filter(u=>u.type==='tank').length;
+          if(vt<10&&f.resources>=150&&f.vespene>=100&&canAffordSupply(b.faction,'tank')){f.resources-=150;f.vespene-=100;units.push(makeUnit(b.faction,'tank',b.x+(Math.random()-0.5)*30,b.y+(Math.random()-0.5)*30));b.spawnTimer=22;}
+          else b.spawnTimer=4;
+        } else if(mod==='reactor'){
+          // Avec Réacteur : produit 2 hélions si ressources suffisantes
+          let vh=myUnits(b.faction).filter(u=>u.type==='hellion').length;
+          const canDouble=usedSupply(b.faction)+2*(UNIT_SUPPLY['hellion']||1)<=maxSupply(b.faction);
+          if(vh<8&&f.resources>=200&&canDouble){f.resources-=200;units.push(makeUnit(b.faction,'hellion',b.x+(Math.random()-0.5)*30,b.y+(Math.random()-0.5)*30));units.push(makeUnit(b.faction,'hellion',b.x+(Math.random()-0.5)*30,b.y+(Math.random()-0.5)*30));b.spawnTimer=15;}
+          else if(vh<8&&f.resources>=100&&canAffordSupply(b.faction,'hellion')){f.resources-=100;units.push(makeUnit(b.faction,'hellion',b.x+(Math.random()-0.5)*30,b.y+(Math.random()-0.5)*30));b.spawnTimer=15;}
+          else b.spawnTimer=4;
+        } else {
+          // Sans module : produit des hélions uniquement
+          let vh=myUnits(b.faction).filter(u=>u.type==='hellion').length;
+          if(vh<6&&f.resources>=100&&canAffordSupply(b.faction,'hellion')){f.resources-=100;units.push(makeUnit(b.faction,'hellion',b.x+(Math.random()-0.5)*30,b.y+(Math.random()-0.5)*30));b.spawnTimer=15;}
+          else b.spawnTimer=4;
+        }
       }
     }
     if(b.type==='starport'){
@@ -1562,6 +1578,29 @@ function runAI(fid,dt) {
     }
   }
 
+  // ── Modules de factory ──
+  {
+    const factModTimerKey = 'factModuleTimer';
+    if(!ai[factModTimerKey]) ai[factModTimerKey] = 0;
+    ai[factModTimerKey] -= dt;
+    if(ai[factModTimerKey] <= 0) {
+      ai[factModTimerKey] = 5 + Math.random() * 5;
+      const moduleCost = 50, moduleCostVesp = 50;
+      const myFactories = myB.filter(b=>b.type==='factory'&&b.buildProgress>=1);
+      const ftechlabCount = myFactories.filter(b=>b.module==='techlab'||b.modulePending==='techlab').length;
+      const freeFact = myFactories.filter(b=>!b.module&&!b.modulePending);
+      if(freeFact.length > 0 && f.resources >= moduleCost && f.vespene >= moduleCostVesp) {
+        // Prioriser tech lab (débloque tanks), puis réacteur
+        let moduleType = ftechlabCount === 0 ? 'techlab' : 'reactor';
+        let target = freeFact[0];
+        f.resources -= moduleCost; f.vespene -= moduleCostVesp;
+        target.modulePending = moduleType;
+        target.moduleBuildTimer = 30;
+        log(`${f.name} — Construction ${moduleType==='techlab'?'Centre Technique':'Réacteur'} (Factory)...`, fid);
+      }
+    }
+  }
+
   // ── Logique d'attaque ──
   ai.attackTimer-=dt;
   if(ai.attackTimer>0) return;
@@ -1949,8 +1988,8 @@ function drawBuildings(){
       ctx.fillStyle=bright; ctx.font='10px Share Tech Mono';
       ctx.textAlign='center'; ctx.textBaseline='middle'; ctx.fillText(b.label,0,0);
       if(b.buildProgress<1){ctx.fillStyle='#111';ctx.fillRect(-s/2,s/2+2,s,3);ctx.fillStyle=bright;ctx.fillRect(-s/2,s/2+2,s*b.buildProgress,3);}
-      // ── Indicateur module caserne ──
-      if(b.type==='barracks'&&b.buildProgress>=1){
+      // ── Indicateur module caserne / factory ──
+      if((b.type==='barracks'||b.type==='factory')&&b.buildProgress>=1){
         const mod=b.module||b.modulePending;
         if(mod){
           const mc=mod==='techlab'?'#ff9500':'#00cfff';
@@ -2620,17 +2659,33 @@ function updateGameHeadless(dt){
       }
     }
     if(b.type==='factory'){
+      // ── Build module ──
+      if(b.modulePending&&!b.module){
+        b.moduleBuildTimer-=dt;
+        if(b.moduleBuildTimer<=0){b.module=b.modulePending;b.modulePending=null;log(`${factions[b.faction]?.name} — ${b.module==='techlab'?'Centre Technique':'Réacteur'} (Factory) opérationnel`,b.faction);}
+      }
       if(f.resources>300&&b.spawnTimer>1) b.spawnTimer=1; // flush si surplus
       b.spawnTimer-=dt;
       if(b.spawnTimer<=0){
-        let vt=myUnits(b.faction).filter(u=>u.type==='tank').length;
-        let vh=myUnits(b.faction).filter(u=>u.type==='hellion').length;
-        let enemyLight=visibleEnemyUnits(b.faction).filter(v=>UNIT_TYPES[v.type]?.light&&!isAirUnit(v)).length;
-        // Décision IA : hélions si beaucoup d'unités légères ennemies ou déséquilibre, tanks sinon
-        let buildHellion = vh<4 && (enemyLight>3 || vh<vt);
-        if(buildHellion&&f.resources>=100&&canAffordSupply(b.faction,'hellion')){f.resources-=100;units.push(makeUnit(b.faction,'hellion',b.x+(Math.random()-0.5)*30,b.y+(Math.random()-0.5)*30));b.spawnTimer=15;}
-        else if(vt<10&&f.resources>=150&&f.vespene>=100&&canAffordSupply(b.faction,'tank')){f.resources-=150;f.vespene-=100;units.push(makeUnit(b.faction,'tank',b.x+(Math.random()-0.5)*30,b.y+(Math.random()-0.5)*30));b.spawnTimer=22;}
-        else b.spawnTimer=4;
+        const mod=b.module;
+        if(mod==='techlab'){
+          // Avec Tech Lab : produit des tanks
+          let vt=myUnits(b.faction).filter(u=>u.type==='tank').length;
+          if(vt<10&&f.resources>=150&&f.vespene>=100&&canAffordSupply(b.faction,'tank')){f.resources-=150;f.vespene-=100;units.push(makeUnit(b.faction,'tank',b.x+(Math.random()-0.5)*30,b.y+(Math.random()-0.5)*30));b.spawnTimer=22;}
+          else b.spawnTimer=4;
+        } else if(mod==='reactor'){
+          // Avec Réacteur : produit 2 hélions si ressources suffisantes
+          let vh=myUnits(b.faction).filter(u=>u.type==='hellion').length;
+          const canDouble=usedSupply(b.faction)+2*(UNIT_SUPPLY['hellion']||1)<=maxSupply(b.faction);
+          if(vh<8&&f.resources>=200&&canDouble){f.resources-=200;units.push(makeUnit(b.faction,'hellion',b.x+(Math.random()-0.5)*30,b.y+(Math.random()-0.5)*30));units.push(makeUnit(b.faction,'hellion',b.x+(Math.random()-0.5)*30,b.y+(Math.random()-0.5)*30));b.spawnTimer=15;}
+          else if(vh<8&&f.resources>=100&&canAffordSupply(b.faction,'hellion')){f.resources-=100;units.push(makeUnit(b.faction,'hellion',b.x+(Math.random()-0.5)*30,b.y+(Math.random()-0.5)*30));b.spawnTimer=15;}
+          else b.spawnTimer=4;
+        } else {
+          // Sans module : produit des hélions uniquement
+          let vh=myUnits(b.faction).filter(u=>u.type==='hellion').length;
+          if(vh<6&&f.resources>=100&&canAffordSupply(b.faction,'hellion')){f.resources-=100;units.push(makeUnit(b.faction,'hellion',b.x+(Math.random()-0.5)*30,b.y+(Math.random()-0.5)*30));b.spawnTimer=15;}
+          else b.spawnTimer=4;
+        }
       }
     }
     if(b.type==='starport'){
